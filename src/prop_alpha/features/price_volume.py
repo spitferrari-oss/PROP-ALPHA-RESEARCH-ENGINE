@@ -31,6 +31,25 @@ def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
     df["lower_wick"] = df[["open", "close"]].min(axis=1) - df["low"]
     df["rolling_high_20"] = df["high"].rolling(20).max()
     df["rolling_low_20"] = df["low"].rolling(20).min()
+    # Prior-bar swing levels: the swing high/low known as of the *previous*
+    # bar's close, so a strategy can compare the current bar's own high/low
+    # against a level that existed before this bar printed (no look-ahead).
+    df["prior_swing_high"] = df["rolling_high_20"].shift(1)
+    df["prior_swing_low"] = df["rolling_low_20"].shift(1)
+    return df
+
+
+def add_market_structure_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Previous-completed-day high/low (spec §10 Market Structure). Computed
+    from a day-indexed summary shifted by one day, so today's rows only ever
+    see yesterday's fully-formed range — never today's own high/low.
+    """
+    df = df.copy()
+    day = _session_day(df["timestamp"])
+    day_summary = df.groupby(day).agg(day_high=("high", "max"), day_low=("low", "min"))
+    prior_summary = day_summary.shift(1)
+    df["prior_day_high"] = day.map(prior_summary["day_high"]).to_numpy()
+    df["prior_day_low"] = day.map(prior_summary["day_low"]).to_numpy()
     return df
 
 
@@ -43,6 +62,8 @@ def add_volume_features(df: pd.DataFrame) -> pd.DataFrame:
         df["cumulative_delta"] = df.groupby(_session_day(df["timestamp"]))["delta"].cumsum()
         df["delta_change"] = df["delta"].diff()
         df["delta_acceleration"] = df["delta_change"].diff()
+        accel_std = df["delta_acceleration"].rolling(20).std()
+        df["delta_acceleration_z"] = df["delta_acceleration"] / accel_std
     return df
 
 
@@ -74,4 +95,5 @@ def build_feature_set(df: pd.DataFrame) -> pd.DataFrame:
     df = add_volume_features(df)
     df = add_volatility_features(df)
     df = add_vwap_features(df)
+    df = add_market_structure_features(df)
     return df

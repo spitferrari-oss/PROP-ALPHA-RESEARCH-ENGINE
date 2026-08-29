@@ -17,8 +17,22 @@ from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.reporting.report import generate_report
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
 from prop_alpha.statistics.monte_carlo import simulate_daily_pnl_paths
+from prop_alpha.strategies.absorption_reversal import AbsorptionReversal
+from prop_alpha.strategies.baselines import (
+    BASELINE_STRATEGIES,
+    RandomDirection,
+    RandomEntry,
+)
+from prop_alpha.strategies.compression_expansion import CompressionExpansion
+from prop_alpha.strategies.delta_acceleration_momentum import DeltaAccelerationMomentum
+from prop_alpha.strategies.liquidity_sweep_reversal import LiquiditySweepReversal
 from prop_alpha.strategies.momentum import IntradayMomentum
+from prop_alpha.strategies.opening_drive_continuation import OpeningDriveContinuation
 from prop_alpha.strategies.opening_range import OpeningRangeBreakout
+from prop_alpha.strategies.prior_day_breakout import PriorDayHighLowBreakout
+from prop_alpha.strategies.prior_day_reversal import PriorDayHighLowReversal
+from prop_alpha.strategies.volume_profile_breakout import VolumeProfileBreakout
+from prop_alpha.strategies.volume_profile_reversion import VolumeProfileMeanReversion
 from prop_alpha.strategies.vwap_reversion import VwapMeanReversion
 from prop_alpha.utils.hashing import git_commit_hash, hash_dict, hash_file, make_experiment_id
 
@@ -33,7 +47,23 @@ app.add_typer(research_app, name="research")
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
 
-BASELINE_STRATEGIES = [IntradayMomentum, OpeningRangeBreakout, VwapMeanReversion]
+# The 12 MVP baseline strategies (spec §89) — "baseline" in the sense of
+# benchmark alphas to validate the pipeline against, not the trivial
+# no-edge comparators in strategies.baselines (spec §90).
+ALPHA_STRATEGIES = [
+    IntradayMomentum,               # ALPHA_01
+    OpeningRangeBreakout,           # ALPHA_02
+    VwapMeanReversion,              # ALPHA_03
+    VolumeProfileMeanReversion,     # ALPHA_04
+    VolumeProfileBreakout,          # ALPHA_05
+    PriorDayHighLowReversal,        # ALPHA_06
+    PriorDayHighLowBreakout,        # ALPHA_07
+    DeltaAccelerationMomentum,      # ALPHA_08
+    AbsorptionReversal,             # ALPHA_09
+    LiquiditySweepReversal,         # ALPHA_10
+    CompressionExpansion,           # ALPHA_11
+    OpeningDriveContinuation,       # ALPHA_12
+]
 
 
 @data_app.command("generate-demo")
@@ -72,6 +102,66 @@ def data_features(
     typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
 
 
+def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day) -> dict:
+    df_signals = strategy.with_risk_levels(df_feat)
+    trades = run_backtest(
+        df_signals,
+        cost_model=cost_model,
+        max_trades_day=config.risk.max_trades_day,
+        point_value=config.market.point_value,
+    )
+    trades_df = trades_to_frame(trades)
+
+    trade_metrics = compute_trade_metrics(trades_df)
+    day_metrics = compute_day_metrics(trades_df)
+    dpnl = daily_pnl(trades_df)
+
+    oos_trades = trades_df[trades_df["exit_time"].dt.date >= oos_start_day] if not trades_df.empty else trades_df
+    oos_ev_day = compute_day_metrics(oos_trades)["ev_per_day_dollars"]
+
+    boot = bootstrap_daily_pnl(dpnl, n_boot=1000, seed=config.seed) if len(dpnl) > 5 else None
+
+    mc_paths = simulate_daily_pnl_paths(dpnl, n_paths=5000, n_days=30, seed=config.seed) if len(dpnl) > 1 else None
+    prop_sim = (
+        simulate_prop_paths(mc_paths, config.prop)
+        if mc_paths is not None
+        else {"p_breach": float("nan"), "p_payout": float("nan"), "expected_payout": float("nan"),
+              "expected_days_to_payout": float("nan")}
+    )
+
+    research_status = "OUT_OF_SAMPLE" if (oos_ev_day is not None and oos_ev_day > 0) else "BACKTESTED"
+
+    return {
+        "alpha_id": strategy.meta.alpha_id,
+        "alpha_name": strategy.meta.alpha_name,
+        "family": strategy.meta.family,
+        "mechanism": strategy.meta.mechanism,
+        "research_status": research_status,
+        **trade_metrics,
+        **day_metrics,
+        "boot_ev_p5": boot["ev_per_day"]["p5"] if boot else float("nan"),
+        "boot_ev_p95": boot["ev_per_day"]["p95"] if boot else float("nan"),
+        "mc_n_paths": prop_sim.get("n_paths", "n/a"),
+        "mc_n_days": prop_sim.get("n_days_horizon", "n/a"),
+        "p_breach": prop_sim["p_breach"],
+        "p_payout": prop_sim["p_payout"],
+        "expected_payout": prop_sim["expected_payout"],
+        "expected_days_to_payout": prop_sim["expected_days_to_payout"],
+    }
+
+
+def _instantiate_baselines(seed: int) -> list:
+    instances = []
+    for strat_cls in BASELINE_STRATEGIES:
+        if strat_cls is RandomEntry:
+            instances.append(strat_cls(seed=seed))
+        elif strat_cls is RandomDirection:
+            instances.append(strat_cls(seed=seed + 1))
+        else:
+            instances.append(strat_cls())
+    return instances
+
+
 def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Path:
     config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
 
@@ -98,54 +188,11 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Pa
         spread_ticks=config.cost.spread_ticks,
     )
 
-    results = []
-    for strat_cls in BASELINE_STRATEGIES:
-        strategy = strat_cls()
-        df_signals = strategy.with_risk_levels(df_feat)
-        trades = run_backtest(
-            df_signals,
-            cost_model=cost_model,
-            max_trades_day=config.risk.max_trades_day,
-            point_value=config.market.point_value,
-        )
-        trades_df = trades_to_frame(trades)
-
-        trade_metrics = compute_trade_metrics(trades_df)
-        day_metrics = compute_day_metrics(trades_df)
-        dpnl = daily_pnl(trades_df)
-
-        oos_trades = trades_df[trades_df["exit_time"].dt.date >= oos_start_day] if not trades_df.empty else trades_df
-        oos_ev_day = compute_day_metrics(oos_trades)["ev_per_day_dollars"]
-
-        boot = bootstrap_daily_pnl(dpnl, n_boot=1000, seed=config.seed) if len(dpnl) > 5 else None
-
-        mc_paths = simulate_daily_pnl_paths(dpnl, n_paths=5000, n_days=30, seed=config.seed) if len(dpnl) > 1 else None
-        prop_sim = (
-            simulate_prop_paths(mc_paths, config.prop)
-            if mc_paths is not None
-            else {"p_breach": float("nan"), "p_payout": float("nan"), "expected_payout": float("nan"),
-                  "expected_days_to_payout": float("nan")}
-        )
-
-        research_status = "OUT_OF_SAMPLE" if (oos_ev_day is not None and oos_ev_day > 0) else "BACKTESTED"
-
-        results.append({
-            "alpha_id": strategy.meta.alpha_id,
-            "alpha_name": strategy.meta.alpha_name,
-            "family": strategy.meta.family,
-            "mechanism": strategy.meta.mechanism,
-            "research_status": research_status,
-            **trade_metrics,
-            **day_metrics,
-            "boot_ev_p5": boot["ev_per_day"]["p5"] if boot else float("nan"),
-            "boot_ev_p95": boot["ev_per_day"]["p95"] if boot else float("nan"),
-            "mc_n_paths": prop_sim.get("n_paths", "n/a"),
-            "mc_n_days": prop_sim.get("n_days_horizon", "n/a"),
-            "p_breach": prop_sim["p_breach"],
-            "p_payout": prop_sim["p_payout"],
-            "expected_payout": prop_sim["expected_payout"],
-            "expected_days_to_payout": prop_sim["expected_days_to_payout"],
-        })
+    strategies = [cls() for cls in ALPHA_STRATEGIES] + _instantiate_baselines(config.seed)
+    results = [
+        _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day)
+        for strategy in strategies
+    ]
 
     experiment_id = make_experiment_id()
     meta = {

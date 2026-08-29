@@ -40,8 +40,8 @@ src/prop_alpha/
 ├── config.py         # pydantic EngineConfig — no hardcoded parameters
 ├── data/              # schema, synthetic generator, quality gate, parquet/duckdb loader
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
-├── features/             # price/volume/volatility/VWAP/order-flow + volume profile; pipeline.py chains features + session annotation
-├── strategies/             # Alpha object (base.py) + baseline strategies
+├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
+├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo
 ├── prop/                  # AccountState, prop-firm rules, path simulator
@@ -49,6 +49,40 @@ src/prop_alpha/
 ├── utils/hashing.py        # reproducibility (git commit, config/dataset hashes, experiment IDs)
 └── cli.py                   # `pae` Typer CLI, incl. `pae research full-run`
 ```
+
+## Strategy library (Phase 3, spec §89/§90)
+
+`cli.ALPHA_STRATEGIES` holds all 12 MVP baseline strategies; each is a small
+`Strategy` subclass whose `generate_signals` reads only already-computed
+feature columns:
+
+| ID | Strategy | Family | Key features used |
+|---|---|---|---|
+| ALPHA_01 | Intraday Momentum | MOMENTUM | return z-score, relative volume |
+| ALPHA_02 | Opening Range Breakout | MOMENTUM | per-day opening range |
+| ALPHA_03 | VWAP Mean Reversion | MEAN_REVERSION | `vwap_z` |
+| ALPHA_04 | Volume Profile Mean Reversion | MEAN_REVERSION | `vp_vah`/`vp_val` |
+| ALPHA_05 | Volume Profile Breakout | MOMENTUM | `vp_vah`/`vp_val` crossing |
+| ALPHA_06 | Previous Day High/Low Reversal | MEAN_REVERSION | `prior_day_high`/`low` sweep+reject |
+| ALPHA_07 | Previous Day High/Low Breakout | MOMENTUM | `prior_day_high`/`low` |
+| ALPHA_08 | Delta Acceleration Momentum | MICROSTRUCTURE | `delta_acceleration_z` |
+| ALPHA_09 | Absorption Reversal | MICROSTRUCTURE | `relative_volume`, `body`/`atr_14`, `delta` |
+| ALPHA_10 | Liquidity Sweep Reversal | MICROSTRUCTURE | `prior_swing_high`/`low` sweep + `delta` |
+| ALPHA_11 | Compression to Expansion | MOMENTUM | `volatility_percentile`, `true_range`/`atr_14` |
+| ALPHA_12 | Opening Drive Continuation | MOMENTUM | first-bar body vs `atr_14` |
+
+`strategies/baselines.py` holds the 6 trivial no-edge comparators from §90
+(Buy & Hold, Random Entry, Random Direction, Simple MA Crossover, Simple
+Breakout, Simple Mean Reversion), tagged `family="BASELINE"` and reported
+separately — see §90: "every alpha must demonstrate incremental value over
+an appropriate baseline."
+
+On the current synthetic dataset, ALPHA_09 (Absorption Reversal) tends to
+produce zero trades — the synthetic generator does not model true
+volume/price absorption, so its conjunction of conditions rarely fires.
+That is a property of the synthetic data, not a bug: the pipeline handles a
+zero-trade strategy gracefully (metrics report NaN, bootstrap/Monte Carlo
+are skipped) rather than crashing or fabricating a result.
 
 ## Key design decisions
 

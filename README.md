@@ -6,11 +6,12 @@ account constraints — optimizing for **Expected Payout**, not raw backtest
 return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
-This repository implements **Phase 1 (Foundation)** and **Phase 2 (Core
-Features)** of the production specification: a working, reproducible,
-tested vertical slice through the whole pipeline — data → session/feature
-engines → strategy → backtest → costs → OOS split → bootstrap/Monte Carlo →
-prop account simulation → ranked report — using a clearly-labeled
+This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
+Features)**, and **Phase 3 (Strategy Library)** of the production
+specification: a working, reproducible, tested vertical slice through the
+whole pipeline — data → session/feature engines → 12 baseline strategies
+(+ 6 no-edge comparators) → backtest → costs → OOS split → bootstrap/Monte
+Carlo → prop account simulation → ranked report — using a clearly-labeled
 **synthetic** dataset. It is deliberately not the full 10-phase system (no
 regime engine, ML meta-alpha, or agentic discovery yet) — see "What's not
 built yet" below and §137 of the spec for the phased plan.
@@ -45,7 +46,7 @@ pae data features
 - Config-driven market/session/risk/cost/prop parameters (`configs/*.yaml`, no hardcoded magic numbers)
 - Parquet + DuckDB data layer, with a synthetic OHLCV generator clearly marked `source=SYNTHETIC`
 - Data quality gate (duplicate/non-monotonic timestamps, NaNs, invalid OHLC bounds)
-- Alpha object + 3 of the 12 baseline strategies (Intraday Momentum, Opening Range Breakout, VWAP Mean Reversion)
+- Alpha object base class (`strategies/base.py`)
 - Event-driven bar backtester: next-bar-open entries (no look-ahead), intrabar stop/target checks, end-of-day flatten, configurable commission/slippage/spread
 - In-sample/out-of-sample day split
 - Stationary block bootstrap for EV/Sharpe/drawdown confidence intervals
@@ -57,10 +58,17 @@ pae data features
 - Feature engine: price, volume, volatility, VWAP, order-flow (delta/delta-change) features
 - Volume Profile engine: developing (intraday, no-look-ahead) POC/VAH/VAL, HVN/LVN node counts, profile width, plus prior-completed-day POC/VAH/VAL and distance-to-level features, on a fixed price ladder (spec §10)
 - Session Engine (spec §7): independent, config-driven named windows (US_OPEN, US_LUNCH, US_POWER_HOUR, US_PREMARKET, LONDON, FRANKFURT, ASIA, OVERNIGHT, US_RTH by default), overnight/midnight-wrapping windows, holiday calendar, per-date half-day close overrides, `minutes_since_session_open`
+- Market structure features: prior-completed-day high/low, prior-bar swing high/low, z-scored delta acceleration
 
-32 unit/property tests, all passing (21 from Phase 1 + 11 new for the
-session/volume-profile engines); two full pipeline runs with the same
-config/seed still produce byte-identical reports (spec §75).
+**Phase 3 — Strategy Library**
+- All 12 MVP baseline strategies (spec §89): Intraday Momentum, Opening Range Breakout, VWAP Mean Reversion, Volume Profile Mean Reversion, Volume Profile Breakout, Previous Day High/Low Reversal, Previous Day High/Low Breakout, Delta Acceleration Momentum, Absorption Reversal, Liquidity Sweep Reversal, Compression→Expansion, Opening Drive Continuation
+- 6 trivial no-edge baseline comparators (spec §90): Buy & Hold, Random Entry, Random Direction, Simple MA Crossover, Simple Breakout, Simple Mean Reversion — reported separately, since the point is what every alpha must beat, not to compete for rank
+- Report now splits "Top Alpha Ranking" from "Baseline Comparators" and prints the incremental EV/day of the best alpha over the best baseline
+
+89 unit/property tests, all passing; two full `pae research full-run`
+executions (18 strategies) with the same config/seed still produce
+byte-identical reports (spec §75). A full run over 250 synthetic days with
+all 18 strategies takes ~40s on this environment.
 
 ## What's not built yet
 
