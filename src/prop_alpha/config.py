@@ -85,6 +85,16 @@ class RegimeConfig(BaseModel):
     trend_lookback_bars: int = 5
 
 
+class DiscoveryConfig(BaseModel):
+    """Alpha Discovery Engine parameters (spec §18/§19/§48)."""
+    max_combo_size: int = 2
+    max_candidates: int = 150
+    min_trades_to_screen: int = 20
+    symbolic_regression_horizon_bars: int = 4
+    symbolic_regression_top_k: int = 10
+    symbolic_regression_min_obs: int = 200
+
+
 class RiskConfig(BaseModel):
     risk_per_trade: float = 0.005
     max_trades_day: int = 3
@@ -116,6 +126,7 @@ class EngineConfig(BaseModel):
     half_days: dict[str, str] = Field(default_factory=dict)
     volume_profile: VolumeProfileConfig = Field(default_factory=VolumeProfileConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     prop: PropFirmConfig = Field(default_factory=PropFirmConfig)

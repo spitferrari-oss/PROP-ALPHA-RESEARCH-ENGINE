@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1-6 slice)
+## Pipeline (Phase 1-7 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -46,6 +46,37 @@ PAYOUT OPTIMIZER (prop_alpha.risk.payout_optimizer) — #1-ranked alpha only:
 CONDITIONAL EV BY REGIME (prop_alpha.regimes.conditional_ev) — #1-ranked alpha only
 ```
 
+`pae research discover` shares the same data/feature/regime prep
+(`cli._prepare_dataset`, used by both commands) but is otherwise a
+separate pipeline from `full-run`:
+
+```text
+CONDITION LIBRARY (prop_alpha.discovery.conditions) — ~20 predicates over
+    existing feature/regime columns
+    ↓
+SETUP GENERATOR (prop_alpha.discovery.setup_generator) — combinatorial
+    search: 1-2 conditions AND'ed, both directions, same ATR-based
+    stop/target every hand-coded alpha uses
+    ↓
+QUICK SCREEN (prop_alpha.discovery.screening) — cheap backtest-only IS/OOS
+    EV check per candidate (no bootstrap/MC/WFA)
+    ↓
+HYPOTHESIS LEDGER (prop_alpha.discovery.hypothesis) — every candidate,
+    survivor or not, appended to research_memory/hypotheses/ledger.jsonl
+    ↓
+SYMBOLIC REGRESSION (prop_alpha.discovery.symbolic_regression) — a
+    complementary raw-signal scan, independent of the candidate list above
+    ↓
+DISCOVERY REPORT (prop_alpha.reporting.discovery_report)
+```
+
+A discovery survivor reaches at most `HYPOTHESIS`/`BACKTESTED` — promoting
+one further means a human hand-codes it as a `Strategy`, adds it to
+`cli.ALPHA_STRATEGIES`, and runs it through `full-run`'s actual Phase 4
+gates (walk-forward, bootstrap, PBO/DSR, cost sensitivity). Discovery
+never auto-promotes anything, on purpose (spec §18: generating
+combinations must never make them automatically valid).
+
 This is the "research first" subset of the full spec pipeline (§3): no ML
 meta-alpha layer, no execution/live layer. Those are later phases (§137).
 
@@ -58,6 +89,7 @@ src/prop_alpha/
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
+├── discovery/               # condition library, combinatorial setup generator, quick screening, symbolic regression, Hypothesis Ledger
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
@@ -240,6 +272,52 @@ condition their signals on them.
   top alpha's EV/trade ranges from +$2,614 in BREAKOUT down to -$707 in
   LOW_VOLATILITY, a >3,000% swing that the flat, unconditional EV/day
   number in the main ranking table completely hides.
+
+## Alpha Discovery Engine (Phase 7, spec §18/§19/§20/§48)
+
+- **Generation is decoupled from validation** (spec §18's explicit
+  requirement): `discovery/setup_generator.generate_candidate_setups`
+  builds `GeneratedStrategy` instances — a plain `Strategy` subclass whose
+  `generate_signals` ANDs 1-2 `Condition` predicates together — purely
+  combinatorially, with no awareness of how they'll perform. Every
+  candidate reuses the exact same ATR-based stop/target as the 12
+  hand-coded alphas (`Strategy.with_risk_levels`), so a discovered setup's
+  backtest is directly comparable to a hand-coded one's.
+- **The condition library is the search space** (`discovery/conditions.py`):
+  ~20 named boolean predicates over already-computed feature/regime
+  columns (VWAP z-score extremes, delta acceleration, relative volume,
+  every rule-based regime label, transition stability, prior-day
+  breaks, developing POC proximity). `max_combo_size` is capped at 2 —
+  not the spec's "migliaia di combinazioni" scale — because each
+  candidate costs a full backtest through the same per-bar Python loop
+  every alpha uses; see "What's not built yet" for the performance
+  ceiling this implies.
+- **Screening is deliberately cheap and deliberately weak**
+  (`discovery/screening.quick_evaluate`): only a backtest, no
+  bootstrap/Monte Carlo/walk-forward — passing requires enough trades and
+  positive EV/day on *both* the in-sample and out-of-sample slices, a
+  coarse filter against an IS-only fluke, not a validation gate. A pass
+  reaches `BACKTESTED` at most; only a human hand-coding the idea and
+  running it through `full-run`'s Phase 4 gates can promote it to
+  `WALK_FORWARD`/`ROBUST`.
+- **Every candidate is logged, survivor or not**
+  (`discovery/hypothesis.HypothesisLedger`, spec §20): an append-only
+  JSONL file — rejected candidates become `RETIRED` hypotheses with their
+  actual IS/OOS numbers as `result`, not silently discarded (spec §96
+  Failed Strategy Database). The mechanism/economic-rationale text is
+  auto-derived from the conditions used (`Condition.mechanism_hint`), so
+  even an auto-generated candidate carries a plausible "why," not just a
+  boolean expression.
+- **Symbolic regression is a separate, complementary scan**
+  (`discovery/symbolic_regression.py`, spec §48): ranks single features
+  and pairwise sums/differences by Spearman IC against a short-horizon
+  *forward* return, tie-broken toward fewer terms (spec §49). The forward
+  return intentionally uses future bars (`close.shift(-horizon)`) — that
+  is correct here since it is the regression's target/label, not an input
+  feature; it must never be used as one. This surfaces *which raw signals*
+  carry information, distinct from the setup generator's boolean-rule
+  search — a human turns a high-IC expression into a new condition for the
+  library, not something the pipeline does automatically.
 
 ## Key design decisions
 

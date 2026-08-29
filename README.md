@@ -8,16 +8,18 @@ for the data policy.
 
 This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
 Features)**, **Phase 3 (Strategy Library)**, **Phase 4 (Statistical
-Validation)**, **Phase 5 (Prop Engine)**, and **Phase 6 (Regime Engine)**
-of the production specification: a working, reproducible, tested vertical
-slice through the whole pipeline — data → session/feature/regime engines →
-12 baseline strategies (+ 6 no-edge comparators) → backtest → costs → OOS
-split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting control
-→ cost-sensitivity stress test → prop account simulation → position sizing
-& payout-policy optimization → conditional EV by regime → ranked report —
-using a clearly-labeled **synthetic** dataset. It is deliberately not the
-full 10-phase system (no ML meta-alpha layer or agentic discovery yet) —
-see "What's not built yet" below and §137 of the spec for the phased plan.
+Validation)**, **Phase 5 (Prop Engine)**, **Phase 6 (Regime Engine)**, and
+**Phase 7 (Alpha Discovery)** of the production specification: a working,
+reproducible, tested vertical slice through the whole pipeline — data →
+session/feature/regime engines → 12 baseline strategies (+ 6 no-edge
+comparators, + combinatorial discovery candidates) → backtest → costs →
+OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting
+control → cost-sensitivity stress test → prop account simulation →
+position sizing & payout-policy optimization → conditional EV by regime →
+ranked report — using a clearly-labeled **synthetic** dataset. It is
+deliberately not the full 10-phase system (no ML meta-alpha layer or
+agentic multi-agent research loop yet) — see "What's not built yet" below
+and §137 of the spec for the phased plan.
 
 ## Quickstart
 
@@ -34,6 +36,10 @@ pae research full-run --config configs/example.yaml
 # Faster iteration: skips walk-forward analysis and cost-sensitivity
 # stress testing (still runs OOS/bootstrap/Monte Carlo/PBO/DSR).
 pae research full-run --config configs/example.yaml --fast
+
+# Alpha Discovery Engine: combinatorial search over a condition library +
+# symbolic regression, with every candidate logged to the Hypothesis Ledger.
+pae research discover --config configs/example.yaml
 
 # Run tests
 pytest -q
@@ -93,11 +99,23 @@ pae data features
 - Conditional Expected Value by Regime (spec §14, `regimes/conditional_ev.py`): breaks the #1-ranked alpha's trades down by the regime active at entry — on the synthetic dataset this reveals the top alpha's EV/trade ranges from +$2,614 in BREAKOUT down to -$707 in LOW_VOLATILITY, exactly the "when does it work, not just does it work" question the spec builds this engine to answer
 - New report section: "Conditional Expected Value by Regime for `<top alpha>`"
 
-154 unit/property tests, all passing; two full `pae research full-run`
+**Phase 7 — Alpha Discovery**
+- Hypothesis Ledger (spec §20, `discovery/hypothesis.py`): an append-only JSONL store at `research_memory/hypotheses/ledger.jsonl` — every candidate the discovery engine backtests, survivor or not, gets a permanent entry (mechanism, economic rationale, expected regimes/failure modes, test plan, result, status), never silently overwritten
+- Setup Generator / combinatorial search (spec §18/§19 Level 2, `discovery/conditions.py` + `discovery/setup_generator.py`): a 20-condition library over existing feature/regime columns, programmatically combined (1-2 conditions, both directions) into candidate setups reusing the same ATR-based stop/target every hand-coded alpha uses — generation is deliberately decoupled from validation (spec §18: generating combinations must never make them automatically valid)
+- Quick IS/OOS screening (`discovery/screening.py`): a cheap backtest-only pass (no bootstrap/Monte Carlo/walk-forward) requiring enough trades and positive EV/day on *both* the IS and OOS slices to pass — on the synthetic dataset, 150 generated candidates -> 51 survivors, with the top candidate (`SHORT: vwap_z_extreme_low & delta_accel_positive`) showing $3,869 OOS EV/day
+- Symbolic Regression (spec §48, `discovery/symbolic_regression.py`): ranks simple expressions (single features and pairwise sums/differences) over a forward-return target by Spearman IC, tie-broken toward fewer terms (spec §49) — correctly surfaces `vwap_distance` as the strongest simple predictor (IC=0.357) ahead of every 2-term combination that doesn't clearly beat it
+- New CLI command `pae research discover`; a survivor reaches at most `HYPOTHESIS`/`BACKTESTED` — promoting one to the full Phase 4 gates means hand-coding it as a `Strategy` and adding it to `cli.ALPHA_STRATEGIES`
+
+175 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
-byte-identical reports (spec §75). A full run over 250 synthetic days with
-all 18 strategies takes ~40s with `--fast`, ~3 minutes with the full
-Phase 4 walk-forward + cost-sensitivity gates enabled (default).
+byte-identical reports (spec §75), unaffected by the Phase 7 refactor that
+factored shared data/feature/regime prep out into `cli._prepare_dataset`
+for reuse by both `full-run` and `discover`. A full run over 250 synthetic
+days with all 18 strategies takes ~40s with `--fast`, ~3 minutes with the
+full Phase 4 walk-forward + cost-sensitivity gates enabled (default);
+`pae research discover` with the default 150-candidate search takes ~5.5
+minutes (`discovery.max_candidates` in config trades search breadth for
+speed).
 
 ## What's not built yet
 
@@ -121,8 +139,17 @@ change-point algorithm), a proper HMM/Markov-Switching model (the Gaussian
 Mixture classifier is the spec's own listed alternative, not a sequential
 state model), per-alpha regime robustness across all 12 candidates (§71 —
 conditional EV by regime currently runs for the #1-ranked alpha only, same
-scope as the Payout Optimizer), ML meta-alpha layer, symbolic regression,
-the multi-agent research loop, and live/paper execution are all future
-phases per §137 of the spec. Do not treat current EV/payout numbers as
-anything other than a pipeline
-correctness check on synthetic data — see `docs/data.md`.
+scope as the Payout Optimizer), Level 3 machine discovery (§19 — genetic
+programming / feature selection / Bayesian optimization; the discovery
+engine built is Level 2 combinatorial search plus a symbolic-regression
+signal scan, not an evolutionary search), automatic promotion from a
+discovery survivor into `cli.ALPHA_STRATEGIES` (deliberately manual — a
+human decides what's worth hand-coding and running through the full Phase
+4 gates), a Research Question Generator or Experiment Prioritization queue
+(§93/§94 — the condition library and combinatorial search are fixed, not
+generated from a growing bibliography), the full ML meta-alpha layer
+(§45-47 — supervised probability-of-success models over regime/session
+state), the multi-agent research loop, and live/paper execution are all
+future phases per §137 of the spec. Do not treat current EV/payout numbers
+as anything other than a pipeline correctness check on synthetic data —
+see `docs/data.md`.

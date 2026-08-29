@@ -12,10 +12,13 @@ from prop_alpha.config import EngineConfig
 from prop_alpha.data.loader import load_parquet, save_parquet
 from prop_alpha.data.quality import validate_ohlcv
 from prop_alpha.data.synthetic import generate_synthetic_ohlcv
+from prop_alpha.discovery.hypothesis import HypothesisLedger
+from prop_alpha.discovery.pipeline import run_discovery
 from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.regimes.conditional_ev import conditional_ev_by_regime
 from prop_alpha.regimes.pipeline import build_regime_features
+from prop_alpha.reporting.discovery_report import generate_discovery_report
 from prop_alpha.reporting.report import generate_report, rank_alphas
 from prop_alpha.risk.payout_optimizer import compare_policies, default_policies
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
@@ -212,9 +215,11 @@ def _instantiate_baselines(seed: int) -> list:
     return instances
 
 
-def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast: bool = False) -> Path:
-    config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
-
+def _prepare_dataset(config: EngineConfig, n_days: int) -> dict:
+    """Shared data -> features -> regime prep used by both `full-run` and
+    `discover`, so the two commands can never silently diverge on how the
+    IS/OOS boundary or regime fit are computed.
+    """
     raw_path = Path(DEMO_RAW_PATH)
     df_raw = generate_synthetic_ohlcv(n_days=n_days, seed=config.seed)
     save_parquet(df_raw, raw_path)
@@ -245,6 +250,27 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         slippage_ticks=config.cost.slippage_ticks,
         spread_ticks=config.cost.spread_ticks,
     )
+
+    return {
+        "raw_path": raw_path,
+        "df_raw": df_raw,
+        "df_feat": df_feat,
+        "unique_days": unique_days,
+        "oos_start_day": oos_start_day,
+        "in_sample_days": in_sample_days,
+        "cost_model": cost_model,
+    }
+
+
+def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast: bool = False) -> Path:
+    config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
+    prepared = _prepare_dataset(config, n_days)
+    raw_path = prepared["raw_path"]
+    df_raw = prepared["df_raw"]
+    df_feat = prepared["df_feat"]
+    unique_days = prepared["unique_days"]
+    oos_start_day = prepared["oos_start_day"]
+    cost_model = prepared["cost_model"]
 
     alpha_instances = [cls() for cls in ALPHA_STRATEGIES]
     baseline_instances = _instantiate_baselines(config.seed)
@@ -334,6 +360,51 @@ def research_full_run(
     """
     report_path = _run_full_research(config, n_days, out_dir, fast=fast)
     typer.echo(f"Report written to {report_path}")
+
+
+def _run_discover(config_path: str | None, n_days: int, out_dir: str, top_n: int, ledger_path: str) -> Path:
+    config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
+    prepared = _prepare_dataset(config, n_days)
+
+    ledger = HypothesisLedger(ledger_path)
+    discovery_result = run_discovery(
+        prepared["df_feat"], prepared["cost_model"], config, prepared["oos_start_day"],
+        ledger=ledger, dataset_note=f"{n_days}-day synthetic demo dataset (seed={config.seed})",
+    )
+
+    experiment_id = make_experiment_id(prefix="DISC")
+    meta = {
+        "git_commit": git_commit_hash(),
+        "config_hash": hash_dict(config.model_dump()),
+        "dataset_hash": hash_file(prepared["raw_path"]),
+        "dataset_source": prepared["df_raw"].attrs.get("source", "unknown"),
+        "seed": config.seed,
+    }
+    return generate_discovery_report(discovery_result, experiment_id, meta, top_n=top_n, out_dir=out_dir)
+
+
+@research_app.command("discover")
+def research_discover(
+    config: str = typer.Option(None, help="Path to a YAML EngineConfig; defaults built in if omitted"),
+    n_days: int = 250,
+    out_dir: str = "reports",
+    top_n: int = 15,
+    ledger_path: str = typer.Option(
+        "research_memory/hypotheses/ledger.jsonl",
+        help="Hypothesis Ledger file (spec §20) — every candidate, survivor or not, is appended here.",
+    ),
+) -> None:
+    """Alpha Discovery Engine (spec §18/§19 Level 2, §20, §48): generate
+    candidate setups via combinatorial search over a condition library,
+    quick-screen each on IS/OOS EV, log every one to the Hypothesis Ledger,
+    run a symbolic-regression scan for simple predictive expressions, and
+    report the survivors. A discovered candidate reaches at most
+    HYPOTHESIS/BACKTESTED here — promote a promising one to
+    `cli.ALPHA_STRATEGIES` and run `pae research full-run` for the full
+    Phase 4 statistical validation gates before it means anything.
+    """
+    report_path = _run_discover(config, n_days, out_dir, top_n, ledger_path)
+    typer.echo(f"Discovery report written to {report_path}")
 
 
 if __name__ == "__main__":
