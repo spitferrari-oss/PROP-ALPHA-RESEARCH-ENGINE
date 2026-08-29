@@ -20,9 +20,15 @@ COST MODEL (prop_alpha.backtest.costs)
     ↓
 OOS SPLIT (last 20% of trading days, in cli._run_full_research)
     ↓
+WALK-FORWARD ANALYSIS (prop_alpha.statistics.walk_forward) — alphas only, skipped with --fast
+    ↓
 BOOTSTRAP (prop_alpha.statistics.bootstrap)
     ↓
 MONTE CARLO (prop_alpha.statistics.monte_carlo)
+    ↓
+COST SENSITIVITY (prop_alpha.statistics.cost_sensitivity) — alphas only, skipped with --fast
+    ↓
+PBO + DSR (prop_alpha.statistics.pbo / dsr) — once across the alpha trial pool
     ↓
 PROP SIMULATION (prop_alpha.prop.simulator)
     ↓
@@ -43,7 +49,7 @@ src/prop_alpha/
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
-├── statistics/           # bootstrap, Monte Carlo
+├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
 ├── prop/                  # AccountState, prop-firm rules, path simulator
 ├── reporting/              # ranking + markdown report generation
 ├── utils/hashing.py        # reproducibility (git commit, config/dataset hashes, experiment IDs)
@@ -83,6 +89,44 @@ volume/price absorption, so its conjunction of conditions rarely fires.
 That is a property of the synthetic data, not a bug: the pipeline handles a
 zero-trade strategy gracefully (metrics report NaN, bootstrap/Monte Carlo
 are skipped) rather than crashing or fabricating a result.
+
+## Statistical validation (Phase 4, spec §26/§23/§24/§30)
+
+- **Walk-Forward Analysis** (`statistics/walk_forward.py`) splits each
+  alpha's days into 5 sequential, non-overlapping folds and re-backtests
+  independently within each — folds only ever see their own rows of the
+  already-computed `df_feat` (features aren't recomputed, so no cross-fold
+  leakage is possible). Current strategies are fixed-rule, not fitted, so
+  this validates *temporal stability* (did the edge hold up rolling forward
+  through time, or was the full-sample number one lucky stretch?) rather
+  than parameter re-optimization — a future parameterized/ML strategy would
+  add an actual fit-on-train step per fold on top of this same splitting.
+- **Cost sensitivity** (`statistics/cost_sensitivity.py`) re-backtests each
+  alpha's already-generated signals across the five cost profiles already
+  defined in `backtest/costs.py` (optimistic → extreme) and reports the
+  EV/day degradation curve plus the most expensive profile the strategy
+  still survives.
+- **PBO** (`statistics/pbo.py`) and **DSR** (`statistics/dsr.py`) are
+  computed once across the 12-alpha trial pool, not per-strategy — they are
+  statements about the *selection process*, not about any single alpha.
+  PBO uses Combinatorially Symmetric Cross-Validation (Bailey et al. 2014):
+  split the trading days into 8 blocks, and for every way of choosing half
+  the blocks as "in-sample", ask how often the in-sample Sharpe-ratio
+  winner ranked below the out-of-sample median. DSR (Bailey & Lopez de
+  Prado 2014) deflates each alpha's Sharpe ratio by the expected maximum
+  Sharpe achievable by pure luck across N=12 independent trials, given the
+  trial pool's own Sharpe spread — a high raw Sharpe with a low DSR is a
+  multiple-testing red flag, not grounds for promotion.
+- **`research_status` lifecycle** (spec §9): an alpha only reaches
+  `WALK_FORWARD` (up from `OUT_OF_SAMPLE`) once its OOS EV/day is positive
+  *and* at least 60% of its walk-forward folds are individually
+  EV/day-positive. Baseline comparators never run walk-forward/cost
+  sensitivity (they aren't candidates for promotion) and cap out at
+  `OUT_OF_SAMPLE`/`BACKTESTED`.
+- **`pae research full-run --fast`** skips walk-forward and cost
+  sensitivity (the two per-alpha diagnostics that each mean N more full
+  backtests) for faster iteration; OOS, bootstrap, Monte Carlo, and the
+  pool-level PBO/DSR still run every time.
 
 ## Key design decisions
 

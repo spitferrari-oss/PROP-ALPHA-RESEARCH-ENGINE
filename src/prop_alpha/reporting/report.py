@@ -6,6 +6,9 @@ Baseline comparators (spec §90: Buy & Hold, Random Entry, Random Direction,
 Simple MA, Simple Breakout, Simple Mean Reversion — tagged family=BASELINE)
 are reported separately from the ranked alpha table, since the point of a
 baseline is to show what an alpha must beat, not to compete for rank.
+
+Phase 4 adds cross-strategy overfitting diagnostics (PBO, DSR — spec §30)
+and per-alpha walk-forward/cost-sensitivity results (spec §26, §23/§24).
 """
 from __future__ import annotations
 
@@ -13,9 +16,9 @@ from pathlib import Path
 
 TABLE_HEADER = (
     "| Rank | Alpha | Family | Trades | EV/trade ($) | EV/day ($) | "
-    "Win Rate | Max DD ($) | P(Breach) | P(Payout) | Expected Payout ($) | Status |"
+    "Win Rate | Max DD ($) | P(Breach) | P(Payout) | Expected Payout ($) | DSR | Status |"
 )
-TABLE_SEP = "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
+TABLE_SEP = "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"
 
 
 def rank_alphas(results: list[dict]) -> list[dict]:
@@ -25,17 +28,23 @@ def rank_alphas(results: list[dict]) -> list[dict]:
     )
 
 
+def _fmt_pct(x) -> str:
+    return "n/a" if x is None or x != x else f"{x:.1%}"
+
+
 def _table_row(i: int, r: dict) -> str:
+    dsr = r.get("dsr", float("nan"))
+    dsr_str = "n/a" if dsr != dsr else f"{dsr:.2f}"
     return (
         f"| {i} | {r['alpha_name']} | {r['family']} | {r['n_trades']} | "
         f"{r['ev_per_trade_dollars']:.2f} | {r['ev_per_day_dollars']:.2f} | "
         f"{r['win_rate']:.1%} | {r['max_drawdown']:.0f} | {r['p_breach']:.1%} | "
-        f"{r['p_payout']:.1%} | {r['expected_payout']:.0f} | {r['research_status']} |"
+        f"{r['p_payout']:.1%} | {r['expected_payout']:.0f} | {dsr_str} | {r['research_status']} |"
     )
 
 
 def _detail_block(r: dict) -> list[str]:
-    return [
+    lines = [
         f"### {r['alpha_name']} ({r['alpha_id']})",
         "",
         f"- Family: {r['family']} | Mechanism: {r.get('mechanism', 'n/a')}",
@@ -54,15 +63,59 @@ def _detail_block(r: dict) -> list[str]:
         f"{r.get('mc_n_days', 'n/a')}-day horizon): P(Breach)={r['p_breach']:.1%}, "
         f"P(Payout)={r['p_payout']:.1%}, Expected days to payout="
         f"{r.get('expected_days_to_payout', float('nan')):.1f}",
-        f"- Research status: {r['research_status']}",
+        f"- Deflated Sharpe Ratio: {_fmt_pct(r.get('dsr'))} "
+        "(probability the Sharpe isn't a multiple-testing artifact, spec §30)",
+    ]
+
+    if r.get("wf_n_folds"):
+        fold_evs = ", ".join(
+            f"${v:.0f}" if v == v else "n/a"
+            for v in (r.get("wf_fold_ev_per_day") or [])
+        )
+        lines.append(
+            f"- Walk-forward ({r['wf_n_folds']} sequential folds): "
+            f"{_fmt_pct(r.get('wf_positive_fold_fraction'))} of folds EV/day-positive, "
+            f"worst fold EV/day ${r.get('wf_worst_fold_ev_per_day', float('nan')):.2f}"
+            + (f" [{fold_evs}]" if fold_evs else "")
+        )
+
+    cost_sens = r.get("cost_sensitivity")
+    if cost_sens:
+        curve = ", ".join(f"{k}=${v:.0f}" for k, v in cost_sens.items() if v == v)
+        lines.append(
+            f"- Cost sensitivity (EV/day by profile): {curve} | "
+            f"breakeven cost profile: {r.get('breakeven_cost_profile') or 'none (unprofitable even optimistic)'}"
+        )
+
+    lines += [f"- Research status: {r['research_status']}", ""]
+    return lines
+
+
+def _diagnostics_section(diagnostics: dict | None) -> list[str]:
+    if not diagnostics:
+        return []
+    pbo = diagnostics.get("pbo") or {}
+    lines = [
+        "## Statistical Validation — Overfitting Control (spec §30)",
+        "",
+        "Computed once across the alpha trial pool (not per-strategy): PBO asks how "
+        "often the best in-sample strategy would have ranked below the out-of-sample "
+        "median; a low DSR means a strategy's Sharpe is plausibly a multiple-testing "
+        "artifact even if it looks good raw.",
+        "",
+        f"**Probability of Backtest Overfitting (CSCV):** {_fmt_pct(pbo.get('pbo'))} "
+        f"({pbo.get('n_combinations', 0)} combinations, {pbo.get('n_strategies', 0)} "
+        f"strategies, {pbo.get('n_splits', 0)} blocks)",
         "",
     ]
+    return lines
 
 
 def generate_report(
     results: list[dict],
     experiment_id: str,
     meta: dict,
+    diagnostics: dict | None = None,
     out_dir: str | Path = "reports",
 ) -> Path:
     out_dir = Path(out_dir)
@@ -112,7 +165,9 @@ def generate_report(
                 f"\\${best_baseline['ev_per_day_dollars']:.2f} — incremental EV/day: \\${edge:.2f}.",
             ]
 
-    lines += ["", "## Per-Alpha Detail", ""]
+    lines += [""] + _diagnostics_section(diagnostics)
+
+    lines += ["## Per-Alpha Detail", ""]
     for r in ranked_alphas:
         lines += _detail_block(r)
 

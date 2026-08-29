@@ -16,7 +16,11 @@ from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.reporting.report import generate_report
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
+from prop_alpha.statistics.cost_sensitivity import breakeven_cost_profile, evaluate_cost_sensitivity
+from prop_alpha.statistics.dsr import compute_dsr_for_pool
 from prop_alpha.statistics.monte_carlo import simulate_daily_pnl_paths
+from prop_alpha.statistics.pbo import build_pnl_matrix, compute_pbo
+from prop_alpha.statistics.walk_forward import run_walk_forward
 from prop_alpha.strategies.absorption_reversal import AbsorptionReversal
 from prop_alpha.strategies.baselines import (
     BASELINE_STRATEGIES,
@@ -102,7 +106,18 @@ def data_features(
     typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
 
 
-def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day) -> dict:
+def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:
+    """Backtest one strategy and run its statistical validation gates (spec
+    §60 Research Gates): OOS split, bootstrap, Monte Carlo/prop simulation,
+    and — for real alpha candidates only (`run_diagnostics=True`) — walk-
+    forward stability and a cost-sensitivity stress test. Baseline
+    comparators (spec §90) skip the last two since they aren't candidates
+    for promotion, just a floor every alpha must clear.
+
+    Returns (result_dict, daily_pnl_series) — the latter feeds the
+    cross-strategy PBO/DSR diagnostics computed once after every strategy
+    has been evaluated.
+    """
     df_signals = strategy.with_risk_levels(df_feat)
     trades = run_backtest(
         df_signals,
@@ -129,9 +144,34 @@ def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day) -> 
               "expected_days_to_payout": float("nan")}
     )
 
-    research_status = "OUT_OF_SAMPLE" if (oos_ev_day is not None and oos_ev_day > 0) else "BACKTESTED"
+    wf = None
+    cost_sensitivity = None
+    breakeven_profile = None
+    if run_diagnostics and not trades_df.empty:
+        wf = run_walk_forward(
+            strategy, df_feat, cost_model,
+            max_trades_day=config.risk.max_trades_day,
+            point_value=config.market.point_value,
+            n_folds=5,
+        )
+        cost_sensitivity = evaluate_cost_sensitivity(
+            df_signals, cost_model,
+            max_trades_day=config.risk.max_trades_day,
+            point_value=config.market.point_value,
+        )
+        breakeven_profile = breakeven_cost_profile(cost_sensitivity)
 
-    return {
+    wf_positive_fraction = wf["positive_fold_fraction"] if wf else float("nan")
+    is_walk_forward_robust = run_diagnostics and wf is not None and wf_positive_fraction >= 0.6
+
+    if is_walk_forward_robust and oos_ev_day is not None and oos_ev_day > 0:
+        research_status = "WALK_FORWARD"
+    elif oos_ev_day is not None and oos_ev_day > 0:
+        research_status = "OUT_OF_SAMPLE"
+    else:
+        research_status = "BACKTESTED"
+
+    result = {
         "alpha_id": strategy.meta.alpha_id,
         "alpha_name": strategy.meta.alpha_name,
         "family": strategy.meta.family,
@@ -147,7 +187,14 @@ def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day) -> 
         "p_payout": prop_sim["p_payout"],
         "expected_payout": prop_sim["expected_payout"],
         "expected_days_to_payout": prop_sim["expected_days_to_payout"],
+        "wf_n_folds": wf["n_folds"] if wf else None,
+        "wf_positive_fold_fraction": wf_positive_fraction,
+        "wf_worst_fold_ev_per_day": wf["worst_fold_ev_per_day"] if wf else float("nan"),
+        "wf_fold_ev_per_day": wf["fold_ev_per_day"] if wf else None,
+        "cost_sensitivity": cost_sensitivity,
+        "breakeven_cost_profile": breakeven_profile,
     }
+    return result, dpnl
 
 
 def _instantiate_baselines(seed: int) -> list:
@@ -162,7 +209,7 @@ def _instantiate_baselines(seed: int) -> list:
     return instances
 
 
-def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Path:
+def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast: bool = False) -> Path:
     config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
 
     raw_path = Path(DEMO_RAW_PATH)
@@ -188,11 +235,29 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Pa
         spread_ticks=config.cost.spread_ticks,
     )
 
-    strategies = [cls() for cls in ALPHA_STRATEGIES] + _instantiate_baselines(config.seed)
-    results = [
-        _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day)
-        for strategy in strategies
-    ]
+    alpha_instances = [cls() for cls in ALPHA_STRATEGIES]
+    baseline_instances = _instantiate_baselines(config.seed)
+
+    results = []
+    alpha_daily_pnl = {}
+    for strategy in alpha_instances:
+        result, dpnl = _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics=not fast)
+        results.append(result)
+        alpha_daily_pnl[result["alpha_id"]] = dpnl
+    for strategy in baseline_instances:
+        result, _ = _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics=False)
+        results.append(result)
+
+    # Cross-strategy overfitting diagnostics (spec §30): computed once over
+    # the alpha trial pool, not per-strategy — PBO/DSR are statements about
+    # the *selection process* across all candidates tried, not about any one
+    # alpha in isolation.
+    pnl_matrix = build_pnl_matrix(alpha_daily_pnl, unique_days)
+    pbo_result = compute_pbo(pnl_matrix, n_splits=8)
+    dsr_by_alpha = compute_dsr_for_pool(alpha_daily_pnl)
+    for r in results:
+        dsr = dsr_by_alpha.get(r["alpha_id"])
+        r["dsr"] = dsr["dsr"] if dsr else float("nan")
 
     experiment_id = make_experiment_id()
     meta = {
@@ -202,7 +267,8 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Pa
         "dataset_source": df_raw.attrs.get("source", "unknown"),
         "seed": config.seed,
     }
-    report_path = generate_report(results, experiment_id, meta, out_dir=out_dir)
+    diagnostics = {"pbo": pbo_result, "dsr_by_alpha": dsr_by_alpha}
+    report_path = generate_report(results, experiment_id, meta, diagnostics=diagnostics, out_dir=out_dir)
     return report_path
 
 
@@ -211,11 +277,16 @@ def research_full_run(
     config: str = typer.Option(None, help="Path to a YAML EngineConfig; defaults built in if omitted"),
     n_days: int = 250,
     out_dir: str = "reports",
+    fast: bool = typer.Option(
+        False, help="Skip walk-forward analysis and cost-sensitivity stress testing (spec §26/§23) for"
+        " faster iteration. PBO/DSR and the OOS/bootstrap/Monte Carlo/prop gates still run."
+    ),
 ) -> None:
     """Run the full pipeline: data -> features -> backtest -> OOS -> Monte
-    Carlo -> prop simulation -> ranking -> report (spec §82, §122).
+    Carlo -> prop simulation -> walk-forward -> cost sensitivity -> PBO/DSR
+    -> ranking -> report (spec §82, §122).
     """
-    report_path = _run_full_research(config, n_days, out_dir)
+    report_path = _run_full_research(config, n_days, out_dir, fast=fast)
     typer.echo(f"Report written to {report_path}")
 
 

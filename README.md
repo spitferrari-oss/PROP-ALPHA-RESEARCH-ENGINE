@@ -7,14 +7,16 @@ return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
 This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
-Features)**, and **Phase 3 (Strategy Library)** of the production
-specification: a working, reproducible, tested vertical slice through the
-whole pipeline — data → session/feature engines → 12 baseline strategies
-(+ 6 no-edge comparators) → backtest → costs → OOS split → bootstrap/Monte
-Carlo → prop account simulation → ranked report — using a clearly-labeled
-**synthetic** dataset. It is deliberately not the full 10-phase system (no
-regime engine, ML meta-alpha, or agentic discovery yet) — see "What's not
-built yet" below and §137 of the spec for the phased plan.
+Features)**, **Phase 3 (Strategy Library)**, and **Phase 4 (Statistical
+Validation)** of the production specification: a working, reproducible,
+tested vertical slice through the whole pipeline — data → session/feature
+engines → 12 baseline strategies (+ 6 no-edge comparators) → backtest →
+costs → OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR
+overfitting control → cost-sensitivity stress test → prop account
+simulation → ranked report — using a clearly-labeled **synthetic** dataset.
+It is deliberately not the full 10-phase system (no regime engine, ML
+meta-alpha, or agentic discovery yet) — see "What's not built yet" below
+and §137 of the spec for the phased plan.
 
 ## Quickstart
 
@@ -27,6 +29,10 @@ pip install -e ".[dev]"
 # strategies, runs OOS/bootstrap/Monte Carlo, simulates the prop account,
 # ranks alphas, and writes a markdown report.
 pae research full-run --config configs/example.yaml
+
+# Faster iteration: skips walk-forward analysis and cost-sensitivity
+# stress testing (still runs OOS/bootstrap/Monte Carlo/PBO/DSR).
+pae research full-run --config configs/example.yaml --fast
 
 # Run tests
 pytest -q
@@ -65,17 +71,29 @@ pae data features
 - 6 trivial no-edge baseline comparators (spec §90): Buy & Hold, Random Entry, Random Direction, Simple MA Crossover, Simple Breakout, Simple Mean Reversion — reported separately, since the point is what every alpha must beat, not to compete for rank
 - Report now splits "Top Alpha Ranking" from "Baseline Comparators" and prints the incremental EV/day of the best alpha over the best baseline
 
-89 unit/property tests, all passing; two full `pae research full-run`
+**Phase 4 — Statistical Validation**
+- Walk-Forward Analysis (spec §26): each alpha is re-backtested independently within 5 sequential, non-overlapping out-of-time folds; reports per-fold EV/day, the fraction of profitable folds, and the worst fold — a strategy whose full-sample edge came from one lucky stretch shows up here
+- Probability of Backtest Overfitting via Combinatorially Symmetric Cross-Validation (spec §30): computed once across the 12-alpha trial pool, not per-strategy — asks how often an in-sample "winner" would have ranked below the out-of-sample median
+- Deflated Sharpe Ratio (spec §30): per-alpha, against the expected-maximum-Sharpe-under-the-null benchmark implied by the size of the trial pool — a high raw Sharpe with a low DSR is a multiple-testing red flag, not a promotion
+- Cost sensitivity / slippage stress test (spec §23/§24): each alpha re-backtested across optimistic → base → conservative → stress → extreme cost profiles, reporting the EV/day degradation curve and the most expensive profile it still survives
+- `research_status` now progresses to `WALK_FORWARD` (not just `OUT_OF_SAMPLE`) once ≥60% of walk-forward folds are EV/day-positive, following the Alpha lifecycle states in spec §9
+- New `pae research full-run --fast` flag skips walk-forward/cost-sensitivity for quick iteration (OOS/bootstrap/Monte Carlo/PBO/DSR still run)
+
+105 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
 byte-identical reports (spec §75). A full run over 250 synthetic days with
-all 18 strategies takes ~40s on this environment.
+all 18 strategies takes ~40s with `--fast`, ~3 minutes with the full
+Phase 4 walk-forward + cost-sensitivity gates enabled (default).
 
 ## What's not built yet
 
 Regime detection, the No-Trade engine, position sizing (currently fixed
-1-contract per trade — §37 is not yet wired in), alpha portfolio/allocation,
-overfitting/multiple-testing controls (DSR, PBO), walk-forward analysis,
-ML meta-alpha layer, symbolic regression, the multi-agent research loop, and
-live/paper execution are all future phases per §137 of the spec. Do not
+1-contract per trade — §37 is not yet wired in), alpha portfolio/allocation
+(§41-44), purged/embargoed cross-validation for overlapping labels (§27),
+a dedicated data-leakage engine (§28) beyond the no-look-ahead discipline
+already built into the feature/backtest code, parameter-sensitivity
+surfaces (§70, distinct from the cost-sensitivity sweep that *is* built),
+ML meta-alpha layer, symbolic regression, the multi-agent research loop,
+and live/paper execution are all future phases per §137 of the spec. Do not
 treat current EV/payout numbers as anything other than a pipeline
 correctness check on synthetic data — see `docs/data.md`.
