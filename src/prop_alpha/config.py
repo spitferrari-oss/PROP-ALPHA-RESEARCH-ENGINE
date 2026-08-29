@@ -95,6 +95,20 @@ class DiscoveryConfig(BaseModel):
     symbolic_regression_min_obs: int = 200
 
 
+class MLConfig(BaseModel):
+    """ML Meta-Alpha layer parameters (spec §44/§45/§46/§47/§101). Baseline
+    (Logistic Regression) is always fit alongside the complex model (Random
+    Forest) — the complex model is only worth using if it beats the
+    baseline OOS (spec §45: "un modello più complesso deve dimostrare
+    incremento OOS").
+    """
+    n_estimators: int = 200
+    min_samples_leaf: int = 5
+    uncertainty_threshold: float = 0.15
+    calibration_bins: int = 10
+    min_oos_trades: int = 15
+
+
 class RiskConfig(BaseModel):
     risk_per_trade: float = 0.005
     max_trades_day: int = 3
@@ -127,6 +141,7 @@ class EngineConfig(BaseModel):
     volume_profile: VolumeProfileConfig = Field(default_factory=VolumeProfileConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
+    ml: MLConfig = Field(default_factory=MLConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     prop: PropFirmConfig = Field(default_factory=PropFirmConfig)

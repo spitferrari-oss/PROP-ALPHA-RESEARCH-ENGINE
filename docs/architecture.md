@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1-7 slice)
+## Pipeline (Phase 1-8 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -44,6 +44,10 @@ PAYOUT OPTIMIZER (prop_alpha.risk.payout_optimizer) — #1-ranked alpha only:
     x prop simulation, ranked by Expected Payout
     ↓
 CONDITIONAL EV BY REGIME (prop_alpha.regimes.conditional_ev) — #1-ranked alpha only
+    ↓
+ML META-ALPHA (prop_alpha.ml.meta_alpha) — #1-ranked alpha only:
+    Logistic Regression baseline + Random Forest, both fit on IS trades,
+    calibration (ml.calibration) + ensemble-uncertainty gate evaluated OOS
 ```
 
 `pae research discover` shares the same data/feature/regime prep
@@ -77,8 +81,9 @@ gates (walk-forward, bootstrap, PBO/DSR, cost sensitivity). Discovery
 never auto-promotes anything, on purpose (spec §18: generating
 combinations must never make them automatically valid).
 
-This is the "research first" subset of the full spec pipeline (§3): no ML
-meta-alpha layer, no execution/live layer. Those are later phases (§137).
+This is the "research first" subset of the full spec pipeline (§3): no
+execution/live layer, no multi-agent research loop. Those are later phases
+(§137).
 
 ## Package layout
 
@@ -90,6 +95,7 @@ src/prop_alpha/
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
 ├── discovery/               # condition library, combinatorial setup generator, quick screening, symbolic regression, Hypothesis Ledger
+├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
@@ -318,6 +324,53 @@ condition their signals on them.
   carry information, distinct from the setup generator's boolean-rule
   search — a human turns a high-IC expression into a new condition for the
   library, not something the pipeline does automatically.
+
+## ML Meta-Alpha (Phase 8, spec §44/§45/§46/§47/§101)
+
+- **Baseline-first is enforced, not just aspirational** (spec §45):
+  `ml/meta_alpha.MetaAlphaModel.fit` always trains a `LogisticRegression`
+  alongside the `RandomForestClassifier` — there is no code path that fits
+  the Random Forest alone. `evaluate_meta_alpha` compares their OOS Brier
+  scores and sets `recommended_model` explicitly; the report prints
+  whichever one actually won, including the honest case where it's the
+  simpler baseline. On the synthetic dataset the Random Forest beat the
+  baseline on OOS Brier score but had a *worse* OOS ECE (0.227 vs
+  0.137) — a real mixed result the report shows as-is rather than
+  collapsing into a single "ML wins" headline.
+- **Same IS-only preprocessing discipline as the GMM regime classifier**:
+  `_make_preprocessor` builds a `ColumnTransformer`
+  (`SimpleImputer`+`StandardScaler` for numeric/boolean columns,
+  `OneHotEncoder(handle_unknown="ignore")` for `regime_rule`/`session`)
+  wrapped in the same `Pipeline` as each model. Calling `.fit(X_is, ...)`
+  fits imputation medians, scaling, and the one-hot vocabulary on
+  in-sample rows only; `.predict(X_oos)` reuses those exact fitted
+  statistics — `handle_unknown="ignore"` means a category that only
+  appears OOS gets an all-zero encoding rather than crashing or leaking
+  its existence back into training.
+- **Ensemble variance is the uncertainty method** (spec §47 lists several;
+  this is the one that comes free with a Random Forest):
+  `predict_uncertainty` transforms OOS rows once through the fitted
+  preprocessor, then asks every individual tree in the forest for its own
+  P(win) and takes the standard deviation across trees — high
+  disagreement among trees is a distinct signal from a low *averaged*
+  probability, and is flagged as a would-be `NO_TRADE` when it exceeds
+  `ml.uncertainty_threshold`. On the synthetic dataset's small OOS sample
+  (~30 trades) for the #1 alpha, ensemble disagreement is high enough that
+  every OOS trade clears the threshold — a real, honestly-reported
+  consequence of a ~200-tree forest trained on well under 100 IS trades,
+  not a tuned-away inconvenience; a larger sample or fewer trees would
+  narrow it, and the report is upfront that the gate is uninformative at
+  this sample size rather than pretending it is decisive.
+- **Expected R is a second, separate regressor**
+  (`expected_r_pipeline`, spec §46): a `RandomForestRegressor` over the
+  same feature matrix predicting the realized R-multiple rather than
+  win/loss — available via `predict_expected_r` but not yet surfaced in
+  the report table (see "What's not built yet").
+- **Graceful degradation, not a crash, on thin data**: `evaluate_meta_alpha`
+  returns `status="INSUFFICIENT_DATA"` (with the actual IS/OOS counts) when
+  there aren't enough trades or only one outcome class is present in the
+  training split, and the report renders that explicitly rather than
+  fitting a meaningless model or raising.
 
 ## Key design decisions
 

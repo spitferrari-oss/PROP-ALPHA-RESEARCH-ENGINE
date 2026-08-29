@@ -6,20 +6,19 @@ account constraints — optimizing for **Expected Payout**, not raw backtest
 return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
-This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
-Features)**, **Phase 3 (Strategy Library)**, **Phase 4 (Statistical
-Validation)**, **Phase 5 (Prop Engine)**, **Phase 6 (Regime Engine)**, and
-**Phase 7 (Alpha Discovery)** of the production specification: a working,
-reproducible, tested vertical slice through the whole pipeline — data →
+This repository implements **Phase 1 (Foundation)** through **Phase 8 (ML
+Meta-Alpha)** of the production specification: a working, reproducible,
+tested vertical slice through the whole pipeline — data →
 session/feature/regime engines → 12 baseline strategies (+ 6 no-edge
 comparators, + combinatorial discovery candidates) → backtest → costs →
 OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting
 control → cost-sensitivity stress test → prop account simulation →
 position sizing & payout-policy optimization → conditional EV by regime →
-ranked report — using a clearly-labeled **synthetic** dataset. It is
-deliberately not the full 10-phase system (no ML meta-alpha layer or
-agentic multi-agent research loop yet) — see "What's not built yet" below
-and §137 of the spec for the phased plan.
+ML meta-alpha (P(win) + uncertainty) → ranked report — using a
+clearly-labeled **synthetic** dataset. It is deliberately not the full
+10-phase system (no agentic multi-agent research loop or paper-trading
+shadow mode yet) — see "What's not built yet" below and §137 of the spec
+for the phased plan.
 
 ## Quickstart
 
@@ -106,16 +105,25 @@ pae data features
 - Symbolic Regression (spec §48, `discovery/symbolic_regression.py`): ranks simple expressions (single features and pairwise sums/differences) over a forward-return target by Spearman IC, tie-broken toward fewer terms (spec §49) — correctly surfaces `vwap_distance` as the strongest simple predictor (IC=0.357) ahead of every 2-term combination that doesn't clearly beat it
 - New CLI command `pae research discover`; a survivor reaches at most `HYPOTHESIS`/`BACKTESTED` — promoting one to the full Phase 4 gates means hand-coding it as a `Strategy` and adding it to `cli.ALPHA_STRATEGIES`
 
-175 unit/property tests, all passing; two full `pae research full-run`
+**Phase 8 — ML Meta-Alpha**
+- Meta-Alpha model (spec §44, `ml/meta_alpha.py`): predicts P(this trade wins | market state at entry) for the #1-ranked alpha, not price — features are regime/session/liquidity/volatility/order-flow state (`ml/features.py`), joined to each trade at its own entry bar
+- Baseline-first discipline (spec §45: "un modello più complesso deve dimostrare incremento OOS"): a Logistic Regression baseline is *always* fit alongside a Random Forest, both inside an sklearn `Pipeline`/`ColumnTransformer` fit on in-sample trades only (same IS-only discipline as the Phase 6 GMM); the report explicitly names which model OOS calibration actually recommends rather than assuming the complex one wins — on the synthetic dataset the Random Forest beat the baseline on OOS Brier score (0.160 vs 0.176) but was *less* well-calibrated (ECE 0.227 vs 0.137), a genuine mixed result, not a fabricated clean win
+- Calibration diagnostics (spec §101, `ml/calibration.py`): Brier score, log loss, and Expected Calibration Error computed OOS for both models
+- Uncertainty Engine (spec §47): ensemble variance — the standard deviation of P(win) across the Random Forest's individual trees — flags high-disagreement trades that a `NO_TRADE` gate would exclude; also exposes `predict_expected_r` (a second Random Forest regressor) for Expected R (spec §46)
+- New report section: "ML Meta-Alpha for `<top alpha>`"
+
+191 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
 byte-identical reports (spec §75), unaffected by the Phase 7 refactor that
 factored shared data/feature/regime prep out into `cli._prepare_dataset`
-for reuse by both `full-run` and `discover`. A full run over 250 synthetic
-days with all 18 strategies takes ~40s with `--fast`, ~3 minutes with the
-full Phase 4 walk-forward + cost-sensitivity gates enabled (default);
-`pae research discover` with the default 150-candidate search takes ~5.5
-minutes (`discovery.max_candidates` in config trades search breadth for
-speed).
+for reuse by both `full-run` and `discover`, or by Phase 8's added
+Random-Forest-based meta-model (seeded, so it reproduces exactly too). A
+full run over 250 synthetic days with all 18 strategies takes ~40s with
+`--fast`, ~3 minutes with the full Phase 4 walk-forward + cost-sensitivity
+gates enabled (default) — the ML Meta-Alpha step adds negligible time on
+top of the existing per-alpha diagnostics; `pae research discover` with
+the default 150-candidate search takes ~5.5 minutes
+(`discovery.max_candidates` in config trades search breadth for speed).
 
 ## What's not built yet
 
@@ -125,7 +133,7 @@ nothing yet turns them into a standing decision not to trade), the Daily
 State Machine (§109 —
 today's stop-trading policies achieve the same effect without the separate
 state-machine abstraction), alpha portfolio/allocation across multiple
-alphas at once (§41-44 — the Payout Optimizer sizes and sequences one
+alphas at once (§41-43 — the Payout Optimizer sizes and sequences one
 alpha's own trades, not a multi-alpha portfolio), account-size/risk-percent
 sweeps as a dedicated CLI report (§106/§107 — the mechanism is there in
 `SizingConfig`/`PropFirmConfig`, just not wired into a sweep command),
@@ -147,9 +155,16 @@ discovery survivor into `cli.ALPHA_STRATEGIES` (deliberately manual — a
 human decides what's worth hand-coding and running through the full Phase
 4 gates), a Research Question Generator or Experiment Prioritization queue
 (§93/§94 — the condition library and combinatorial search are fixed, not
-generated from a growing bibliography), the full ML meta-alpha layer
-(§45-47 — supervised probability-of-success models over regime/session
-state), the multi-agent research loop, and live/paper execution are all
-future phases per §137 of the spec. Do not treat current EV/payout numbers
-as anything other than a pipeline correctness check on synthetic data —
-see `docs/data.md`.
+generated from a growing bibliography), gradient-boosted trees specifically
+(XGBoost/LightGBM/CatBoost — Random Forest is the spec's own listed
+alternative and needed no new dependency; scikit-learn's
+`GradientBoostingClassifier` would be a closer stand-in for a future pass),
+sequence models (LSTM/Temporal CNN/Transformer, spec §45's explicit
+"later" tier), conformal prediction (spec §47 lists it as an alternative
+uncertainty method to the ensemble-variance approach built), meta-alpha for
+more than the #1-ranked alpha at a time, symbolic regression or ML
+discovery feeding back into the Setup Generator's condition library
+automatically, the multi-agent research loop, and live/paper execution are
+all future phases per §137 of the spec. Do not treat current EV/payout
+numbers as anything other than a pipeline correctness check on synthetic
+data — see `docs/data.md`.

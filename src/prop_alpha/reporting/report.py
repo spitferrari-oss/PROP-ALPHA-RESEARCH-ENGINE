@@ -163,6 +163,50 @@ def _diagnostics_section(diagnostics: dict | None) -> list[str]:
             )
         lines.append("")
 
+    lines += _meta_alpha_section(diagnostics)
+
+    return lines
+
+
+def _meta_alpha_section(diagnostics: dict) -> list[str]:
+    result = diagnostics.get("meta_alpha_result")
+    alpha_name = diagnostics.get("meta_alpha_alpha_name")
+    if not result:
+        return []
+
+    lines = [f"## ML Meta-Alpha for {alpha_name} (spec §44-47, §101)", ""]
+
+    if result["status"] == "INSUFFICIENT_DATA":
+        lines += [
+            f"Not enough trades to fit/evaluate a meta-model (IS={result['n_is']}, "
+            f"OOS={result['n_oos']}) — needs more history or a lower `ml.min_oos_trades`.",
+            "",
+        ]
+        return lines
+
+    base = result["baseline_calibration"]
+    rf = result["rf_calibration"]
+    lines += [
+        "Predicts P(this trade wins | market state at entry) — a Logistic Regression baseline "
+        "and a Random Forest, both fit on in-sample trades only and evaluated on out-of-sample "
+        "trades. The Random Forest is only worth using if it actually beats the baseline OOS "
+        "(spec §45); otherwise the simpler model is the right call.",
+        "",
+        f"| Model | OOS Brier score | OOS log loss | OOS ECE | N obs |",
+        "|---|---:|---:|---:|---:|",
+        f"| Logistic Regression (baseline) | {base['brier_score']:.3f} | {base['log_loss']:.3f} | "
+        f"{base['ece']:.3f} | {base['n_obs']} |",
+        f"| Random Forest | {rf['brier_score']:.3f} | {rf['log_loss']:.3f} | {rf['ece']:.3f} | {rf['n_obs']} |",
+        "",
+        f"**Recommended model: {result['recommended_model']}** "
+        f"({'Random Forest beats the baseline OOS' if result['rf_beats_baseline'] else 'Random Forest does not beat the simpler baseline OOS — prefer Logistic Regression'}).",
+        "",
+        f"**Uncertainty gate (spec §47):** {result['n_oos_uncertain']} of {result['n_oos']} OOS trades "
+        f"({_fmt_pct(result['pct_oos_uncertain'])}) had ensemble disagreement above "
+        f"the configured threshold and would be flagged NO_TRADE under an uncertainty gate; mean "
+        f"ensemble uncertainty {result['mean_uncertainty']:.3f}.",
+        "",
+    ]
     return lines
 
 

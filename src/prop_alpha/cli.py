@@ -15,6 +15,8 @@ from prop_alpha.data.synthetic import generate_synthetic_ohlcv
 from prop_alpha.discovery.hypothesis import HypothesisLedger
 from prop_alpha.discovery.pipeline import run_discovery
 from prop_alpha.features.pipeline import build_full_feature_set
+from prop_alpha.ml.features import build_ml_feature_matrix
+from prop_alpha.ml.meta_alpha import evaluate_meta_alpha
 from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.regimes.conditional_ev import conditional_ev_by_regime
 from prop_alpha.regimes.pipeline import build_regime_features
@@ -303,6 +305,7 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
     payout_optimizer_results = None
     payout_optimizer_alpha_name = None
     conditional_ev_table = None
+    meta_alpha_result = None
     alpha_results = [r for r in results if r["family"] != "BASELINE"]
     if alpha_results:
         top_alpha_result = rank_alphas(alpha_results)[0]
@@ -324,6 +327,15 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         # engine at all (spec §140/§141).
         conditional_ev_table = conditional_ev_by_regime(top_trades_df, df_feat)
 
+        # ML Meta-Alpha (spec §44-47/§101): predict P(this trade wins) from
+        # market state, with a Logistic Regression baseline the Random
+        # Forest must actually beat OOS before it's worth using (spec §45).
+        is_trades = top_trades_df[top_trades_df["entry_time"].dt.date < oos_start_day] if not top_trades_df.empty else top_trades_df
+        oos_trades = top_trades_df[top_trades_df["entry_time"].dt.date >= oos_start_day] if not top_trades_df.empty else top_trades_df
+        X_is, y_is_win, y_is_r = build_ml_feature_matrix(is_trades, df_feat)
+        X_oos, y_oos_win, _ = build_ml_feature_matrix(oos_trades, df_feat)
+        meta_alpha_result = evaluate_meta_alpha(X_is, y_is_win, y_is_r, X_oos, y_oos_win, config.ml, seed=config.seed)
+
     experiment_id = make_experiment_id()
     meta = {
         "git_commit": git_commit_hash(),
@@ -339,6 +351,8 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         "payout_optimizer_alpha_name": payout_optimizer_alpha_name,
         "conditional_ev_table": conditional_ev_table,
         "conditional_ev_alpha_name": payout_optimizer_alpha_name,
+        "meta_alpha_result": meta_alpha_result,
+        "meta_alpha_alpha_name": payout_optimizer_alpha_name,
     }
     report_path = generate_report(results, experiment_id, meta, diagnostics=diagnostics, out_dir=out_dir)
     return report_path
