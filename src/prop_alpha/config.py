@@ -65,6 +65,26 @@ class VolumeProfileConfig(BaseModel):
     hvn_lvn_z_threshold: float = 1.0
 
 
+class RegimeConfig(BaseModel):
+    """Market Regime Engine parameters (spec §12/§13). Thresholds operate on
+    already-normalized features (percentile ranks, ATR ratios) rather than
+    raw price levels, per spec §116/§117.
+    """
+    gmm_n_components: int = 4
+    gmm_seed: int = 42
+    transition_lookback_bars: int = 3
+    transition_confidence_threshold: float = 0.55
+    panic_tr_atr_mult: float = 4.0
+    panic_relative_volume: float = 3.0
+    breakout_volatility_percentile: float = 0.6
+    compression_volatility_percentile: float = 0.2
+    compression_tr_atr_mult: float = 0.6
+    expansion_tr_atr_mult: float = 1.5
+    high_volatility_percentile: float = 0.8
+    low_volatility_percentile: float = 0.2
+    trend_lookback_bars: int = 5
+
+
 class RiskConfig(BaseModel):
     risk_per_trade: float = 0.005
     max_trades_day: int = 3
@@ -95,6 +115,7 @@ class EngineConfig(BaseModel):
     holidays: list[str] = Field(default_factory=list)
     half_days: dict[str, str] = Field(default_factory=dict)
     volume_profile: VolumeProfileConfig = Field(default_factory=VolumeProfileConfig)
+    regime: RegimeConfig = Field(default_factory=RegimeConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     prop: PropFirmConfig = Field(default_factory=PropFirmConfig)

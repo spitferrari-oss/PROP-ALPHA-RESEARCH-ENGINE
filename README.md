@@ -8,16 +8,16 @@ for the data policy.
 
 This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
 Features)**, **Phase 3 (Strategy Library)**, **Phase 4 (Statistical
-Validation)**, and **Phase 5 (Prop Engine)** of the production
-specification: a working, reproducible, tested vertical slice through the
-whole pipeline — data → session/feature engines → 12 baseline strategies
-(+ 6 no-edge comparators) → backtest → costs → OOS split → walk-forward →
-bootstrap/Monte Carlo → PBO/DSR overfitting control → cost-sensitivity
-stress test → prop account simulation → position sizing & payout-policy
-optimization → ranked report — using a clearly-labeled **synthetic**
-dataset. It is deliberately not the full 10-phase system (no regime engine,
-ML meta-alpha, or agentic discovery yet) — see "What's not built yet" below
-and §137 of the spec for the phased plan.
+Validation)**, **Phase 5 (Prop Engine)**, and **Phase 6 (Regime Engine)**
+of the production specification: a working, reproducible, tested vertical
+slice through the whole pipeline — data → session/feature/regime engines →
+12 baseline strategies (+ 6 no-edge comparators) → backtest → costs → OOS
+split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting control
+→ cost-sensitivity stress test → prop account simulation → position sizing
+& payout-policy optimization → conditional EV by regime → ranked report —
+using a clearly-labeled **synthetic** dataset. It is deliberately not the
+full 10-phase system (no ML meta-alpha layer or agentic discovery yet) —
+see "What's not built yet" below and §137 of the spec for the phased plan.
 
 ## Quickstart
 
@@ -86,7 +86,14 @@ pae data features
 - Payout Optimizer (spec §38, `risk/payout_optimizer.py`): runs the #1-ranked alpha's trade sequence through 5 named policies (the spec's own worked examples — constant risk, risk-up-after-profit, risk-down-after-loss, profit lock, stop-after-+2R) and ranks them by **Expected Payout**, not raw EV/day — on this synthetic dataset, the profit-lock policy has *lower* EV/day than constant risk but a much lower breach probability and a *higher* Expected Payout, which is exactly the distinction §38 exists to surface
 - New report section: "Payout Optimizer — Risk & Stop-Trading Policies for `<top alpha>`"; when the fixed-risk budget can't afford even 1 contract at the account/instrument's configured size, the report says so explicitly rather than showing a misleading empty table
 
-128 unit/property tests, all passing; two full `pae research full-run`
+**Phase 6 — Regime Engine**
+- Rule-based classifier (spec §12, `regimes/rule_based.py`): a priority-ordered cascade over already-normalized features (volatility percentile, true-range/ATR ratio, relative volume, VWAP slope) into PANIC/BREAKOUT/COMPRESSION/EXPANSION/TREND_UP/TREND_DOWN/HIGH_VOLATILITY/LOW_VOLATILITY/RANGE/UNKNOWN, plus separate high/low-liquidity flags
+- Statistical classifier (spec §12, `regimes/statistical.py`): a Gaussian Mixture model (the spec's own alternative to HMM/Markov-Switching) **fit on in-sample days only** and applied to the full series, so no OOS market structure leaks into the cluster definitions every OOS backtest is then evaluated against
+- Regime Transition Engine (spec §13, `regimes/transition.py`): flags a bar `regime_transitioning` when the rule-based label has whipsawed in the last few bars, or the GMM's own posterior confidence in its top cluster is weak — "is the regime changing," not just "what regime is this"
+- Conditional Expected Value by Regime (spec §14, `regimes/conditional_ev.py`): breaks the #1-ranked alpha's trades down by the regime active at entry — on the synthetic dataset this reveals the top alpha's EV/trade ranges from +$2,614 in BREAKOUT down to -$707 in LOW_VOLATILITY, exactly the "when does it work, not just does it work" question the spec builds this engine to answer
+- New report section: "Conditional Expected Value by Regime for `<top alpha>`"
+
+154 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
 byte-identical reports (spec §75). A full run over 250 synthetic days with
 all 18 strategies takes ~40s with `--fast`, ~3 minutes with the full
@@ -94,7 +101,10 @@ Phase 4 walk-forward + cost-sensitivity gates enabled (default).
 
 ## What's not built yet
 
-Regime detection, the No-Trade engine, the Daily State Machine (§109 —
+The No-Trade engine as its own explicit `should_trade(state) -> bool` gate
+(§17 — regime/liquidity/event-risk signals now exist as features, but
+nothing yet turns them into a standing decision not to trade), the Daily
+State Machine (§109 —
 today's stop-trading policies achieve the same effect without the separate
 state-machine abstraction), alpha portfolio/allocation across multiple
 alphas at once (§41-44 — the Payout Optimizer sizes and sequences one
@@ -104,8 +114,15 @@ sweeps as a dedicated CLI report (§106/§107 — the mechanism is there in
 purged/embargoed cross-validation for overlapping labels (§27), a dedicated
 data-leakage engine (§28) beyond the no-look-ahead discipline already built
 into the feature/backtest code, parameter-sensitivity surfaces (§70,
-distinct from the cost-sensitivity sweep that *is* built), ML meta-alpha
-layer, symbolic regression, the multi-agent research loop, and live/paper
-execution are all future phases per §137 of the spec. Do not treat current
-EV/payout numbers as anything other than a pipeline
+distinct from the cost-sensitivity sweep that *is* built), formal
+change-point detection (§13's transition flag uses recent label-flip
+counts and GMM posterior confidence, not a dedicated CUSUM/Bayesian
+change-point algorithm), a proper HMM/Markov-Switching model (the Gaussian
+Mixture classifier is the spec's own listed alternative, not a sequential
+state model), per-alpha regime robustness across all 12 candidates (§71 —
+conditional EV by regime currently runs for the #1-ranked alpha only, same
+scope as the Payout Optimizer), ML meta-alpha layer, symbolic regression,
+the multi-agent research loop, and live/paper execution are all future
+phases per §137 of the spec. Do not treat current EV/payout numbers as
+anything other than a pipeline
 correctness check on synthetic data — see `docs/data.md`.

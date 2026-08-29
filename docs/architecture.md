@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1-5 slice)
+## Pipeline (Phase 1-6 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -8,9 +8,14 @@ RAW DATA (synthetic, spec §123)
 DATA QUALITY (prop_alpha.data.quality)
     ↓
 FEATURE ENGINE (prop_alpha.features.pipeline.build_full_feature_set)
-    ├─ price/volume/volatility/VWAP/order-flow (features.price_volume)
+    ├─ price/volume/volatility/VWAP/order-flow/market-structure (features.price_volume)
     ├─ volume profile: POC/VAH/VAL/HVN/LVN, prior-day levels (features.volume_profile)
     └─ session annotation: windows, holidays, half-days (sessions.engine)
+    ↓
+REGIME ENGINE (prop_alpha.regimes.pipeline.build_regime_features)
+    ├─ rule-based cascade (regimes.rule_based) — pure per-bar arithmetic
+    ├─ Gaussian Mixture (regimes.statistical) — fit on in-sample days only
+    └─ transition flags (regimes.transition)
     ↓
 ALPHA / SETUP (prop_alpha.strategies)
     ↓
@@ -37,11 +42,12 @@ RANKING + REPORT (prop_alpha.reporting.report)
 PAYOUT OPTIMIZER (prop_alpha.risk.payout_optimizer) — #1-ranked alpha only:
     position sizing (risk.position_sizing) x stop-trading policies (risk.stop_trading)
     x prop simulation, ranked by Expected Payout
+    ↓
+CONDITIONAL EV BY REGIME (prop_alpha.regimes.conditional_ev) — #1-ranked alpha only
 ```
 
-This is the "research first" subset of the full spec pipeline (§3): no
-regime engine, no ML meta-alpha, no execution/live layer. Those are later
-phases (§137).
+This is the "research first" subset of the full spec pipeline (§3): no ML
+meta-alpha layer, no execution/live layer. Those are later phases (§137).
 
 ## Package layout
 
@@ -51,6 +57,7 @@ src/prop_alpha/
 ├── data/              # schema, synthetic generator, quality gate, parquet/duckdb loader
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
+├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
@@ -186,6 +193,53 @@ daily P&L -> Monte Carlo -> prop simulation -> Expected Payout
   in 0 contracts — the report says so explicitly (spec §37: the system must
   prevent sizing that could breach on one plausible loss; refusing to size
   at all is the conservative, correct behavior here, not a bug).
+
+## Regime Engine (Phase 6, spec §12/§13/§14)
+
+Regime features are added to `df_feat` right after the feature engine and
+before any strategy sees the data — every strategy and diagnostic
+downstream automatically has `regime_rule`, `regime_gmm`,
+`regime_gmm_confidence`, `regime_transitioning`, `high_liquidity`, and
+`low_liquidity` columns available, even though today's 12 alphas don't
+condition their signals on them.
+
+- **`regimes/rule_based.py`**: a priority-ordered `np.select` cascade —
+  PANIC → BREAKOUT → COMPRESSION → EXPANSION → TREND_UP → TREND_DOWN →
+  HIGH_VOLATILITY → LOW_VOLATILITY → (default) RANGE, with UNKNOWN when any
+  input feature is still NaN (warm-up bars). Every threshold is on a ratio
+  or percentile (`true_range / atr_14`, `volatility_percentile`,
+  `relative_volume`), never a raw price level, per spec §116/§117 — and all
+  configurable via `RegimeConfig`, not hardcoded. High/low liquidity are
+  reported as separate boolean columns rather than folded into the primary
+  label, since a bar can independently be e.g. both TREND_UP and
+  LOW_LIQUIDITY — collapsing that into one categorical would throw away
+  real information.
+- **`regimes/statistical.py`**: `GmmRegimeClassifier` wraps
+  `sklearn.mixture.GaussianMixture` over 3 standardized features
+  (`log_returns`, `realized_vol_20`, `volume_z`). Gaussian Mixture is the
+  spec's own listed alternative to HMM/Markov-Switching (§12), so this
+  satisfies the "statistical" branch of "rule-based; HMM; clustering;
+  change point" without a separate HMM dependency. **Fit is IS-only**:
+  `regimes/pipeline.build_regime_features` fits on the same in-sample day
+  set the OOS split already uses (`cli._run_full_research`'s
+  `in_sample_days`), then predicts on the full series — fitting on the
+  whole dataset would leak OOS market structure into the cluster
+  boundaries every OOS backtest is then judged against.
+- **`regimes/transition.py`**: `regime_transitioning` is spec §13's "is it
+  changing," not "what is it" — flagged when the rule-based label has
+  flipped at least twice within a short rolling window (whipsawing, not a
+  single clean transition) or the GMM's posterior confidence in its top
+  cluster drops below a threshold (the statistical model itself is
+  unsure). This is a lightweight proxy for formal change-point detection,
+  not a CUSUM/Bayesian change-point algorithm — see "What's not built yet."
+- **`regimes/conditional_ev.py`**: this is the payoff for building a regime
+  engine at all (spec §140/§141: don't add complexity that doesn't move
+  OOS EV or Payout Utility). It joins the #1-ranked alpha's trades to the
+  rule-based regime active at each entry bar and reports EV/trade, win
+  rate, and count per regime — on the synthetic dataset this reveals the
+  top alpha's EV/trade ranges from +$2,614 in BREAKOUT down to -$707 in
+  LOW_VOLATILITY, a >3,000% swing that the flat, unconditional EV/day
+  number in the main ranking table completely hides.
 
 ## Key design decisions
 

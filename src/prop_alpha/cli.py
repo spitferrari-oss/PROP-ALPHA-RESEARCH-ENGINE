@@ -14,6 +14,8 @@ from prop_alpha.data.quality import validate_ohlcv
 from prop_alpha.data.synthetic import generate_synthetic_ohlcv
 from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.prop.simulator import simulate_prop_paths
+from prop_alpha.regimes.conditional_ev import conditional_ev_by_regime
+from prop_alpha.regimes.pipeline import build_regime_features
 from prop_alpha.reporting.report import generate_report, rank_alphas
 from prop_alpha.risk.payout_optimizer import compare_policies, default_policies
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
@@ -223,10 +225,18 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         raise typer.Exit(code=1)
 
     df_feat = build_full_feature_set(df_raw, config)
-    save_parquet(df_feat, DEMO_FEATURES_PATH)
 
     unique_days = sorted(df_feat["timestamp"].dt.date.unique())
     oos_start_day = unique_days[int(len(unique_days) * 0.8)]
+    in_sample_days = {d for d in unique_days if d < oos_start_day}
+
+    # Regime Engine (spec §12/§13): rule-based classification is pure
+    # per-bar arithmetic (no fitting), but the Gaussian Mixture classifier
+    # is fit on in-sample days only and then applied to the full series —
+    # fitting on OOS data too would leak OOS market structure into the
+    # cluster definitions every OOS backtest gets evaluated against.
+    df_feat = build_regime_features(df_feat, in_sample_days, config.regime)
+    save_parquet(df_feat, DEMO_FEATURES_PATH)
 
     cost_model = CostModel(
         tick_size=config.market.tick_size,
@@ -266,6 +276,7 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
     # run.
     payout_optimizer_results = None
     payout_optimizer_alpha_name = None
+    conditional_ev_table = None
     alpha_results = [r for r in results if r["family"] != "BASELINE"]
     if alpha_results:
         top_alpha_result = rank_alphas(alpha_results)[0]
@@ -282,6 +293,11 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         )
         payout_optimizer_alpha_name = top_strategy.meta.alpha_name
 
+        # Conditional EV by Regime (spec §14): "when does the winner work,
+        # not just does it work" — the whole point of building a regime
+        # engine at all (spec §140/§141).
+        conditional_ev_table = conditional_ev_by_regime(top_trades_df, df_feat)
+
     experiment_id = make_experiment_id()
     meta = {
         "git_commit": git_commit_hash(),
@@ -295,6 +311,8 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         "dsr_by_alpha": dsr_by_alpha,
         "payout_optimizer": payout_optimizer_results,
         "payout_optimizer_alpha_name": payout_optimizer_alpha_name,
+        "conditional_ev_table": conditional_ev_table,
+        "conditional_ev_alpha_name": payout_optimizer_alpha_name,
     }
     report_path = generate_report(results, experiment_id, meta, diagnostics=diagnostics, out_dir=out_dir)
     return report_path

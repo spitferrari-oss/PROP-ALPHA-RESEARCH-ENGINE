@@ -144,6 +144,25 @@ def _diagnostics_section(diagnostics: dict | None) -> list[str]:
                 "",
             ]
 
+    conditional_ev_table = diagnostics.get("conditional_ev_table")
+    ce_alpha_name = diagnostics.get("conditional_ev_alpha_name")
+    if conditional_ev_table is not None and not conditional_ev_table.empty:
+        lines += [
+            f"## Conditional Expected Value by Regime for {ce_alpha_name} (spec §14)",
+            "",
+            "\"When does the idea work, not just does it work\" — the same trade sequence "
+            "broken down by the rule-based regime (spec §12) active at each trade's entry bar.",
+            "",
+            "| Regime | Trades | Win Rate | Avg R | EV/trade ($) |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for _, row in conditional_ev_table.iterrows():
+            lines.append(
+                f"| {row['regime_rule']} | {row['n_trades']} | {row['win_rate']:.1%} | "
+                f"{row['avg_r']:.2f} | {row['ev_dollars']:.2f} |"
+            )
+        lines.append("")
+
     return lines
 
 
