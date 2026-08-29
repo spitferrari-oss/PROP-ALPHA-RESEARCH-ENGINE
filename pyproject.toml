@@ -1,0 +1,33 @@
+[project]
+name = "prop-alpha-engine"
+version = "0.1.0"
+description = "Prop Alpha Research Engine — autonomous quantitative research and prop-optimization laboratory"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pyarrow>=14.0",
+    "duckdb>=0.10",
+    "pyyaml>=6.0",
+    "pydantic>=2.5",
+    "typer>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+pae = "prop_alpha.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
