@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1 + 2 slice)
+## Pipeline (Phase 1-5 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -33,6 +33,10 @@ PBO + DSR (prop_alpha.statistics.pbo / dsr) — once across the alpha trial pool
 PROP SIMULATION (prop_alpha.prop.simulator)
     ↓
 RANKING + REPORT (prop_alpha.reporting.report)
+    ↓
+PAYOUT OPTIMIZER (prop_alpha.risk.payout_optimizer) — #1-ranked alpha only:
+    position sizing (risk.position_sizing) x stop-trading policies (risk.stop_trading)
+    x prop simulation, ranked by Expected Payout
 ```
 
 This is the "research first" subset of the full spec pipeline (§3): no
@@ -51,6 +55,7 @@ src/prop_alpha/
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
 ├── prop/                  # AccountState, prop-firm rules, path simulator
+├── risk/                   # position sizing, stop-trading policies, payout optimizer
 ├── reporting/              # ranking + markdown report generation
 ├── utils/hashing.py        # reproducibility (git commit, config/dataset hashes, experiment IDs)
 └── cli.py                   # `pae` Typer CLI, incl. `pae research full-run`
@@ -128,6 +133,60 @@ are skipped) rather than crashing or fabricating a result.
   backtests) for faster iteration; OOS, bootstrap, Monte Carlo, and the
   pool-level PBO/DSR still run every time.
 
+## Prop Engine (Phase 5, spec §37/§38/§39)
+
+The main alpha-ranking backtest deliberately stays at 1 contract for every
+strategy (see "Fixed position size" below) — sizing is layered on
+*afterward*, as a separate, independently testable concern:
+
+```text
+1-contract trades (backtest.engine.run_backtest)
+    ↓
+StopTradingPolicy.apply_day_policy    — drop trades after a day-level rule fires
+    ↓
+SizingConfig.apply_position_sizing    — walk trades in time order, size each
+    against the account state that would actually have existed at that point
+    ↓
+daily P&L -> Monte Carlo -> prop simulation -> Expected Payout
+```
+
+- **`risk/position_sizing.py`** (spec §37): `fixed_contracts` (constant N)
+  or `fixed_risk` (risk_per_trade % of *current* equity, so sizing
+  compounds as the account grows or shrinks — see `apply_position_sizing`'s
+  running `equity`). An optional `dynamic_rule` scales the risk percentage
+  up after an intraday profit or down after an intraday loss (spec §38
+  Policies B/C). `prop_aware=True` (the default) caps contracts so a single
+  stop-out can never exceed the account's remaining daily-loss budget
+  (`max_daily_loss + daily_pnl_so_far`) — tested directly in
+  `test_apply_position_sizing_never_exceeds_daily_budget_on_a_single_trade`.
+  Both `pnl` and commission in a 1-contract trade scale linearly with
+  contract count, so rescaling is just `contracts * pnl_per_contract` — no
+  need to re-run the backtest per sizing choice.
+- **`risk/stop_trading.py`** (spec §39): `StopTradingPolicy` supports
+  `stop_after_profit_r`, `stop_after_loss_r`, and `stop_after_n_losses`.
+  `apply_day_policy` walks trades in time order and drops everything after
+  the day's condition first fires — the triggering trade itself is kept
+  (the policy stops trading *after* it, not retroactively).
+- **`risk/payout_optimizer.py`** (spec §38): `default_policies()` returns
+  the spec's own five worked examples (A constant risk, B increase after
+  profit, C decrease after loss, D profit lock at +1R, E stop after +2R).
+  `compare_policies` re-derives each policy's daily P&L from the *same*
+  underlying 1-contract trade sequence and runs it through the existing
+  Monte Carlo + prop simulator, so the comparison is apples-to-apples and
+  ranks by **Expected Payout** (spec §134 Rank 1), not EV/day — on this
+  synthetic dataset, the profit-lock policy has *lower* EV/day than
+  constant risk but a much lower P(Breach) and a *higher* Expected Payout,
+  which is exactly the distinction §38 exists to surface. Applied only to
+  the #1-ranked alpha per run (comparing money-management policy is a
+  downstream-of-selection question, not something to run for all 12
+  candidates every time).
+- **A degenerate result is reported, not hidden**: if the fixed-risk budget
+  (`risk.risk_per_trade × prop.account_size`) can't afford even 1 contract
+  at an alpha's stop distance and `market.point_value`, every policy prices
+  in 0 contracts — the report says so explicitly (spec §37: the system must
+  prevent sizing that could breach on one plausible loss; refusing to size
+  at all is the conservative, correct behavior here, not a bug).
+
 ## Key design decisions
 
 - **No look-ahead**: a strategy's `generate_signals` may only use data up to
@@ -144,10 +203,15 @@ are skipped) rather than crashing or fabricating a result.
 - **Prop rules are config, not code**: `PropFirmConfig` (spec §34) holds
   every account rule; `simulate_prop_paths` never hardcodes a specific
   firm's numbers.
-- **Fixed position size**: this slice trades 1 contract per signal — the
-  Position Sizing Engine (spec §37, EV/uncertainty/distance-to-breach aware
-  sizing) is not yet implemented, so `$` P&L magnitudes are illustrative of
-  pipeline correctness, not of what an appropriately-sized account would see.
+- **Fixed 1 contract for the main alpha ranking, by design**: the "Top
+  Alpha Ranking" table always backtests 1 contract per signal, deliberately
+  — comparing 12 alphas apples-to-apples means holding money-management
+  choices constant across all of them (spec §112-113 rank *strategies*).
+  The Position Sizing Engine and Payout Optimizer (Phase 5, see above) are
+  a separate layer applied only to the #1-ranked alpha; `$` P&L in the main
+  ranking table is still illustrative of relative pipeline/alpha quality,
+  not of what a sized account would actually earn — that's what the Payout
+  Optimizer section answers.
 - **Volume Profile uses a fixed price ladder**: bin edges are `tick_size *
   bin_ticks` (config: `volume_profile.bin_ticks`), not the day's realized
   high/low range — using the full day's range to place bin edges would leak

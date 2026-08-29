@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from prop_alpha.risk.payout_optimizer import rank_policies_by_expected_payout
+
 TABLE_HEADER = (
     "| Rank | Alpha | Family | Trades | EV/trade ($) | EV/day ($) | "
     "Win Rate | Max DD ($) | P(Breach) | P(Payout) | Expected Payout ($) | DSR | Status |"
@@ -108,6 +110,40 @@ def _diagnostics_section(diagnostics: dict | None) -> list[str]:
         f"strategies, {pbo.get('n_splits', 0)} blocks)",
         "",
     ]
+
+    policy_results = diagnostics.get("payout_optimizer")
+    alpha_name = diagnostics.get("payout_optimizer_alpha_name")
+    if policy_results:
+        lines += [
+            f"## Payout Optimizer — Risk & Stop-Trading Policies for {alpha_name} (spec §38)",
+            "",
+            "Same trade sequence, five sizing/stop-trading policies (spec §38's own worked "
+            "examples) — ranked by Expected Payout, not raw EV/day, since a policy that "
+            "survives prop constraints more often can out-earn one with higher unconstrained EV.",
+            "",
+            "| Rank | Policy | Rule | Trades | Avg Contracts | EV/day ($) | Max DD ($) | "
+            "P(Breach) | P(Payout) | Expected Payout ($) |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        ranked_policies = rank_policies_by_expected_payout(policy_results)
+        for i, p in enumerate(ranked_policies, start=1):
+            lines.append(
+                f"| {i} | {p['policy_name']} | {p['description']} | {p['n_trades']} | "
+                f"{p['avg_contracts']:.1f} | {p['ev_per_day_dollars']:.2f} | {p['max_drawdown']:.0f} | "
+                f"{p['p_breach']:.1%} | {p['p_payout']:.1%} | {p['expected_payout']:.0f} |"
+            )
+        lines.append("")
+        if all(p["n_trades"] == 0 for p in policy_results):
+            lines += [
+                "All policies sized 0 contracts for every trade: the fixed-risk budget "
+                "(`risk.risk_per_trade` x `prop.account_size`) can't afford even 1 contract at this "
+                "alpha's stop distances given `market.point_value`. This is the Position Sizing "
+                "Engine correctly refusing to size (spec §37), not a strategy failure — raise "
+                "`risk.risk_per_trade`, `prop.account_size`, or trade a smaller-point-value "
+                "instrument (e.g. MNQ instead of NQ) to see it size real positions.",
+                "",
+            ]
+
     return lines
 
 

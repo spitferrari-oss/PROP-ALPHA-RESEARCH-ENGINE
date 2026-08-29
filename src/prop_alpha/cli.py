@@ -14,7 +14,8 @@ from prop_alpha.data.quality import validate_ohlcv
 from prop_alpha.data.synthetic import generate_synthetic_ohlcv
 from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.prop.simulator import simulate_prop_paths
-from prop_alpha.reporting.report import generate_report
+from prop_alpha.reporting.report import generate_report, rank_alphas
+from prop_alpha.risk.payout_optimizer import compare_policies, default_policies
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
 from prop_alpha.statistics.cost_sensitivity import breakeven_cost_profile, evaluate_cost_sensitivity
 from prop_alpha.statistics.dsr import compute_dsr_for_pool
@@ -259,6 +260,28 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         dsr = dsr_by_alpha.get(r["alpha_id"])
         r["dsr"] = dsr["dsr"] if dsr else float("nan")
 
+    # Payout Optimizer (spec §38): applied to the #1-ranked alpha only — a
+    # sizing/stop-trading policy comparison is a downstream-of-selection
+    # question, not something to run for all 12 candidates on every research
+    # run.
+    payout_optimizer_results = None
+    payout_optimizer_alpha_name = None
+    alpha_results = [r for r in results if r["family"] != "BASELINE"]
+    if alpha_results:
+        top_alpha_result = rank_alphas(alpha_results)[0]
+        top_strategy = next(s for s in alpha_instances if s.meta.alpha_id == top_alpha_result["alpha_id"])
+        top_signals = top_strategy.with_risk_levels(df_feat)
+        top_trades = run_backtest(
+            top_signals, cost_model=cost_model,
+            max_trades_day=config.risk.max_trades_day, point_value=config.market.point_value,
+        )
+        top_trades_df = trades_to_frame(top_trades)
+        payout_optimizer_results = compare_policies(
+            top_trades_df, config.prop, point_value=config.market.point_value, seed=config.seed,
+            policies=default_policies(config.risk.risk_per_trade),
+        )
+        payout_optimizer_alpha_name = top_strategy.meta.alpha_name
+
     experiment_id = make_experiment_id()
     meta = {
         "git_commit": git_commit_hash(),
@@ -267,7 +290,12 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         "dataset_source": df_raw.attrs.get("source", "unknown"),
         "seed": config.seed,
     }
-    diagnostics = {"pbo": pbo_result, "dsr_by_alpha": dsr_by_alpha}
+    diagnostics = {
+        "pbo": pbo_result,
+        "dsr_by_alpha": dsr_by_alpha,
+        "payout_optimizer": payout_optimizer_results,
+        "payout_optimizer_alpha_name": payout_optimizer_alpha_name,
+    }
     report_path = generate_report(results, experiment_id, meta, diagnostics=diagnostics, out_dir=out_dir)
     return report_path
 

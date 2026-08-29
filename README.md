@@ -7,15 +7,16 @@ return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
 This repository implements **Phase 1 (Foundation)**, **Phase 2 (Core
-Features)**, **Phase 3 (Strategy Library)**, and **Phase 4 (Statistical
-Validation)** of the production specification: a working, reproducible,
-tested vertical slice through the whole pipeline — data → session/feature
-engines → 12 baseline strategies (+ 6 no-edge comparators) → backtest →
-costs → OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR
-overfitting control → cost-sensitivity stress test → prop account
-simulation → ranked report — using a clearly-labeled **synthetic** dataset.
-It is deliberately not the full 10-phase system (no regime engine, ML
-meta-alpha, or agentic discovery yet) — see "What's not built yet" below
+Features)**, **Phase 3 (Strategy Library)**, **Phase 4 (Statistical
+Validation)**, and **Phase 5 (Prop Engine)** of the production
+specification: a working, reproducible, tested vertical slice through the
+whole pipeline — data → session/feature engines → 12 baseline strategies
+(+ 6 no-edge comparators) → backtest → costs → OOS split → walk-forward →
+bootstrap/Monte Carlo → PBO/DSR overfitting control → cost-sensitivity
+stress test → prop account simulation → position sizing & payout-policy
+optimization → ranked report — using a clearly-labeled **synthetic**
+dataset. It is deliberately not the full 10-phase system (no regime engine,
+ML meta-alpha, or agentic discovery yet) — see "What's not built yet" below
 and §137 of the spec for the phased plan.
 
 ## Quickstart
@@ -79,7 +80,13 @@ pae data features
 - `research_status` now progresses to `WALK_FORWARD` (not just `OUT_OF_SAMPLE`) once ≥60% of walk-forward folds are EV/day-positive, following the Alpha lifecycle states in spec §9
 - New `pae research full-run --fast` flag skips walk-forward/cost-sensitivity for quick iteration (OOS/bootstrap/Monte Carlo/PBO/DSR still run)
 
-105 unit/property tests, all passing; two full `pae research full-run`
+**Phase 5 — Prop Engine**
+- Position Sizing Engine (spec §37, `risk/position_sizing.py`): a composable layer applied to a strategy's already-backtested 1-contract trade sequence — `fixed_contracts` or `fixed_risk` (risk_per_trade % of current equity) sizing, an optional dynamic rule (scale risk up after an intraday profit / down after a loss), and prop-aware capping so a single stop-out can never by itself exceed the account's remaining daily-loss budget
+- Stop-Trading Policy Engine (spec §39, `risk/stop_trading.py`): day-level policies — stop after +NR, stop after -NR, stop after N losses — that drop a strategy's later same-day trades once triggered
+- Payout Optimizer (spec §38, `risk/payout_optimizer.py`): runs the #1-ranked alpha's trade sequence through 5 named policies (the spec's own worked examples — constant risk, risk-up-after-profit, risk-down-after-loss, profit lock, stop-after-+2R) and ranks them by **Expected Payout**, not raw EV/day — on this synthetic dataset, the profit-lock policy has *lower* EV/day than constant risk but a much lower breach probability and a *higher* Expected Payout, which is exactly the distinction §38 exists to surface
+- New report section: "Payout Optimizer — Risk & Stop-Trading Policies for `<top alpha>`"; when the fixed-risk budget can't afford even 1 contract at the account/instrument's configured size, the report says so explicitly rather than showing a misleading empty table
+
+128 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
 byte-identical reports (spec §75). A full run over 250 synthetic days with
 all 18 strategies takes ~40s with `--fast`, ~3 minutes with the full
@@ -87,13 +94,18 @@ Phase 4 walk-forward + cost-sensitivity gates enabled (default).
 
 ## What's not built yet
 
-Regime detection, the No-Trade engine, position sizing (currently fixed
-1-contract per trade — §37 is not yet wired in), alpha portfolio/allocation
-(§41-44), purged/embargoed cross-validation for overlapping labels (§27),
-a dedicated data-leakage engine (§28) beyond the no-look-ahead discipline
-already built into the feature/backtest code, parameter-sensitivity
-surfaces (§70, distinct from the cost-sensitivity sweep that *is* built),
-ML meta-alpha layer, symbolic regression, the multi-agent research loop,
-and live/paper execution are all future phases per §137 of the spec. Do not
-treat current EV/payout numbers as anything other than a pipeline
+Regime detection, the No-Trade engine, the Daily State Machine (§109 —
+today's stop-trading policies achieve the same effect without the separate
+state-machine abstraction), alpha portfolio/allocation across multiple
+alphas at once (§41-44 — the Payout Optimizer sizes and sequences one
+alpha's own trades, not a multi-alpha portfolio), account-size/risk-percent
+sweeps as a dedicated CLI report (§106/§107 — the mechanism is there in
+`SizingConfig`/`PropFirmConfig`, just not wired into a sweep command),
+purged/embargoed cross-validation for overlapping labels (§27), a dedicated
+data-leakage engine (§28) beyond the no-look-ahead discipline already built
+into the feature/backtest code, parameter-sensitivity surfaces (§70,
+distinct from the cost-sensitivity sweep that *is* built), ML meta-alpha
+layer, symbolic regression, the multi-agent research loop, and live/paper
+execution are all future phases per §137 of the spec. Do not treat current
+EV/payout numbers as anything other than a pipeline
 correctness check on synthetic data — see `docs/data.md`.
