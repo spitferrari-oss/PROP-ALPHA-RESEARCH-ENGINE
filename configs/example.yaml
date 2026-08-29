@@ -11,6 +11,35 @@ session:
   start: "09:30"
   end: "16:00"
 
+# Session Engine windows (spec §7). Omit this key entirely to use the
+# built-in defaults (US_OPEN/US_LUNCH/US_POWER_HOUR/US_PREMARKET/LONDON/
+# FRANKFURT/ASIA/OVERNIGHT/US_RTH) — listed here for illustration.
+sessions:
+  - name: US_OPEN
+    start: "09:30"
+    end: "11:30"
+    timezone: America/New_York
+  - name: US_LUNCH
+    start: "11:30"
+    end: "13:30"
+    timezone: America/New_York
+  - name: US_POWER_HOUR
+    start: "15:00"
+    end: "16:00"
+    timezone: America/New_York
+  - name: ASIA
+    start: "19:00"
+    end: "03:00"
+    timezone: America/New_York
+
+holidays: []
+half_days: {}
+
+volume_profile:
+  bin_ticks: 10
+  value_area_pct: 0.70
+  hvn_lvn_z_threshold: 1.0
+
 risk:
   risk_per_trade: 0.005
   max_trades_day: 3

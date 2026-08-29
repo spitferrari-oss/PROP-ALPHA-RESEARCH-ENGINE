@@ -1,13 +1,16 @@
 # Architecture
 
-## Pipeline (Phase 1 slice)
+## Pipeline (Phase 1 + 2 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
     ↓
 DATA QUALITY (prop_alpha.data.quality)
     ↓
-FEATURE ENGINE (prop_alpha.features.price_volume)
+FEATURE ENGINE (prop_alpha.features.pipeline.build_full_feature_set)
+    ├─ price/volume/volatility/VWAP/order-flow (features.price_volume)
+    ├─ volume profile: POC/VAH/VAL/HVN/LVN, prior-day levels (features.volume_profile)
+    └─ session annotation: windows, holidays, half-days (sessions.engine)
     ↓
 ALPHA / SETUP (prop_alpha.strategies)
     ↓
@@ -36,8 +39,9 @@ phases (§137).
 src/prop_alpha/
 ├── config.py         # pydantic EngineConfig — no hardcoded parameters
 ├── data/              # schema, synthetic generator, quality gate, parquet/duckdb loader
-├── features/           # price/volume/volatility/VWAP/order-flow features
-├── strategies/          # Alpha object (base.py) + baseline strategies
+├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
+├── features/             # price/volume/volatility/VWAP/order-flow + volume profile; pipeline.py chains features + session annotation
+├── strategies/             # Alpha object (base.py) + baseline strategies
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo
 ├── prop/                  # AccountState, prop-firm rules, path simulator
@@ -66,3 +70,14 @@ src/prop_alpha/
   Position Sizing Engine (spec §37, EV/uncertainty/distance-to-breach aware
   sizing) is not yet implemented, so `$` P&L magnitudes are illustrative of
   pipeline correctness, not of what an appropriately-sized account would see.
+- **Volume Profile uses a fixed price ladder**: bin edges are `tick_size *
+  bin_ticks` (config: `volume_profile.bin_ticks`), not the day's realized
+  high/low range — using the full day's range to place bin edges would leak
+  end-of-day information into an intraday "developing" profile. Each bar's
+  volume is split evenly across every bin its `[low, high]` touches.
+  `vp_poc/vah/val/width/hvn_count/lvn_count` are as-of-that-bar; `vp_prior_*`
+  are deliberately the *previous completed* day's finalized profile.
+- **Session Engine is independent of feature/strategy code** (spec §7): a
+  window's start/end/timezone lives entirely in `EngineConfig.sessions`, so
+  redefining a session (or adding a new one) never touches
+  `sessions/engine.py`, `features/*.py`, or a strategy file.

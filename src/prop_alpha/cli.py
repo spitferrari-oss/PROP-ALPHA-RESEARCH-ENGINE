@@ -12,7 +12,7 @@ from prop_alpha.config import EngineConfig
 from prop_alpha.data.loader import load_parquet, save_parquet
 from prop_alpha.data.quality import validate_ohlcv
 from prop_alpha.data.synthetic import generate_synthetic_ohlcv
-from prop_alpha.features.price_volume import build_feature_set
+from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.reporting.report import generate_report
 from prop_alpha.statistics.bootstrap import bootstrap_daily_pnl
@@ -63,9 +63,11 @@ def data_validate(path: str = DEMO_RAW_PATH) -> None:
 def data_features(
     in_path: str = DEMO_RAW_PATH,
     out_path: str = DEMO_FEATURES_PATH,
+    config: str = typer.Option(None, help="Path to a YAML EngineConfig; defaults built in if omitted"),
 ) -> None:
+    engine_config = EngineConfig.from_yaml(config) if config else EngineConfig()
     df = load_parquet(in_path)
-    feats = build_feature_set(df)
+    feats = build_full_feature_set(df, engine_config)
     save_parquet(feats, out_path)
     typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
 
@@ -82,7 +84,7 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str) -> Pa
         typer.echo(f"BACKTEST STATUS = INVALID: {quality.issues}")
         raise typer.Exit(code=1)
 
-    df_feat = build_feature_set(df_raw)
+    df_feat = build_full_feature_set(df_raw, config)
     save_parquet(df_feat, DEMO_FEATURES_PATH)
 
     unique_days = sorted(df_feat["timestamp"].dt.date.unique())
