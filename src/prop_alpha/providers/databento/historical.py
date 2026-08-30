@@ -23,7 +23,7 @@ import os
 
 import pandas as pd
 
-from prop_alpha.data.schema import OPTIONAL_COLUMNS, REQUIRED_COLUMNS
+from prop_alpha.data.normalize import normalize_frame
 from prop_alpha.providers.base import DataLevel, InstrumentDefinition, TradingCalendar
 from prop_alpha.providers.databento.symbology import DEFAULT_SCHEMA_BY_LEVEL, resolve
 
@@ -32,34 +32,20 @@ DATABENTO_API_KEY_ENV = "DATABENTO_API_KEY"
 
 def _normalize(raw_df: pd.DataFrame, schema: str, generic_symbol: str, dataset: str) -> pd.DataFrame:
     """Databento's DBN schemas index rows by `ts_event` (a tz-aware or
-    nanosecond-epoch timestamp); every schema here becomes a frame with an
-    explicit UTC `timestamp` column so downstream code never has to know
-    whether it came from an index or a column.
-
-    Full cross-level normalization into one canonical schema (bars vs.
-    trades vs. book updates) is extension Phase D's job, not this one —
-    this function only does the OHLCV case fully (aliasing straight onto
-    `data/schema.py`'s `REQUIRED_COLUMNS`/`OPTIONAL_COLUMNS` so an
-    `ohlcv-*` pull is a drop-in replacement for the synthetic generator's
-    output); L2-L4 schemas keep their native Databento columns plus the
-    normalized `timestamp`.
+    nanosecond-epoch timestamp); this decodes that into an explicit UTC
+    `timestamp` column — the one piece of Databento-specific raw-column
+    knowledge that belongs in this adapter, not in the vendor-agnostic
+    normalizer. Cross-provider column unification (bars fully, trades
+    fully, L3/L4 book data only by timestamp) is
+    `data.normalize.normalize_frame`'s job (extension Phase D), not
+    repeated here.
     """
     df = raw_df.reset_index() if raw_df.index.name in ("ts_event", "ts_recv") else raw_df.copy()
     ts_col = "ts_event" if "ts_event" in df.columns else df.columns[0]
     df["timestamp"] = pd.to_datetime(df[ts_col], utc=True)
     df = df[["timestamp"] + [c for c in df.columns if c not in ("timestamp", ts_col)]]
 
-    if schema.startswith("ohlcv"):
-        missing = [c for c in REQUIRED_COLUMNS if c != "timestamp" and c not in df.columns]
-        if missing:
-            raise ValueError(
-                f"Databento schema '{schema}' response is missing expected column(s) {missing} "
-                f"— cannot normalize into the canonical OHLCV schema."
-            )
-        for col in OPTIONAL_COLUMNS:
-            if col not in df.columns:
-                df[col] = float("nan")
-        df = df[REQUIRED_COLUMNS + [c for c in OPTIONAL_COLUMNS if c in df.columns]]
+    df = normalize_frame(df, schema)
 
     df.attrs["source"] = "DATABENTO"
     df.attrs["symbol"] = generic_symbol

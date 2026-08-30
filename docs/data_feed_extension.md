@@ -167,19 +167,67 @@ data, market state, signals, and paper/shadow simulation.
   record/route/duplicate-reject/close via a fake live client, both
   provider-unavailable failure paths, and the combined provider).
 
+**Phase D — Data Normalization (extension §152 Phase D, §6-9)**
+- `data/lake.py`: `DataLakePaths` — the extension §6 tier structure
+  (`raw`/`normalized`/`curated`/`features`/`outcomes`/`snapshots`/`metadata`),
+  each partitioned per extension §11
+  (`<tier>/<provider>/<instrument>/<schema>/<date>.parquet` via
+  `partition_path`). Defaults to its own `data/lake/` root rather than the
+  core pipeline's existing `data/raw`/`data/features` (used by the
+  synthetic-data backtester, Phases 1-10) — real-provider ingestion can
+  never collide with that pipeline's files. This also supersedes the
+  `bronze`/`silver`/`gold` tier names `docs/data.md` reserved back in
+  Phase 1 "for later phases once a real ingestion pipeline exists"; those
+  directories remain as unused placeholders, and `docs/data.md` now points
+  here.
+- `data/manifest.py`: `DatasetManifest` — exactly extension §9's YAML
+  fields (id/provider/instrument/venue/start/end/timezone/schema/
+  granularity/created_at/source_version/sha256), `.build()` computes the
+  real SHA-256 of the written file, `.to_yaml()`/`.from_yaml()` round-trip.
+- `data/immutable_store.py`: `write_versioned_parquet` refuses to
+  overwrite an existing partition file (`DataImmutabilityError`, extension
+  §7-8's "Una volta registrato... non deve essere modificato") and appends
+  every write to an append-only `dataset_ledger.jsonl` under `metadata/`
+  (mirroring the Hypothesis Ledger/Audit Trail pattern) alongside the
+  manifest's own YAML file. `next_version_path` names a correction's file
+  `*.v2.parquet`, `*.v3.parquet`, ... — chosen explicitly by the caller,
+  never automatically.
+- `data/normalize.py`: `normalize_frame` is where every provider's
+  OHLCV/trade output converges onto one shared schema — bars alias fully
+  onto `data/schema.py`'s canonical columns, trades onto a
+  `timestamp`/`price`/`size`/`side` schema (extra native columns kept
+  alongside), and multi-level book data (MBP-N/MBO, L3/L4) passes through
+  unchanged except for the normalized timestamp — collapsing a variable
+  number of book levels into one fixed schema is a real design decision
+  not yet made, documented as a gap rather than guessed at. Requires the
+  timestamp column to already be timezone-aware UTC (extension §16/§17).
+- `providers/databento/historical.py` refactored: `_normalize` now only
+  does the Databento-specific `ts_event` -> UTC `timestamp` decoding, then
+  delegates all column-schema unification to `data.normalize.normalize_frame`
+  — fulfilling the promise made in Phase B's docstring that full
+  cross-level normalization was Phase D's job. All existing Phase B/C
+  tests still pass unchanged (same normalized output).
+- 23 new tests (`tests/test_data_lake.py`, `tests/test_dataset_manifest.py`,
+  `tests/test_immutable_store.py`, `tests/test_data_normalize.py`):
+  directory/partition-path structure, manifest build/round-trip/SHA-256
+  correctness, write-once + append-only-ledger + version-bump behavior,
+  and bars/trades/book normalization including the timestamp-policy
+  validation.
+
 ## What's not built yet
 
-Everything from Phase D onward. Concretely, per the extension's own §152
-order: data normalization into the canonical schema with raw immutability
-and dataset manifests (Phase D, §6-9), the data quality engine and 0-100
-`DATA_QUALITY_SCORE` (Phase E, §19-20), the partitioned Parquet/DuckDB
-storage layer (Phase G, §6/§10-11) — note: the §14-15 live-message
-envelope/timestamp-policy Phase F was meant to cover is already built as
-part of Phase C's shared Live Data Engine (`data/live/recorder.py`), since
-a live adapter without any recording path would be untestable; what
-remains under "Phase F" is CLI/config wiring (`pae data record`,
-`recording.yaml`'s snapshot-frequency/outcome-horizon settings, §101),
-not the recorder itself — the GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
+Everything from Phase E onward. Concretely, per the extension's own §152
+order: the data quality engine and 0-100 `DATA_QUALITY_SCORE` (Phase E,
+§19-20); what remains of the storage layer (Phase G, §6/§10-11) now that
+Phase D built the directory structure, manifests, and write-once
+enforcement — the DuckDB query layer over the data lake, `pae data ingest`
+CLI orchestration (incremental download/resume/retry/dedup), compression
+tuning, and actually wiring the `curated`/`features`/`outcomes`/
+`snapshots` tiers beyond `raw`/`normalized`; what remains of Phase F now
+that Phase C's shared `data/live/recorder.py` already covers §14-15's
+envelope/timestamp policy — CLI wiring (`pae data record`) and
+`recording.yaml` config (snapshot frequency, outcome horizons, §101); the
+GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
 variable only, options normalization and the options snapshot/level models
 (Phase I, §28-29), futures/options timestamp synchronization (Phase J,
 §35-36), the options feature engine including GEX regime classification

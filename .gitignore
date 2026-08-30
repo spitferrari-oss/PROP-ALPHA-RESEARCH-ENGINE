@@ -12,6 +12,8 @@ data/silver/*
 data/gold/*
 data/features/*
 !data/*/.gitkeep
+data/lake/*
+!data/lake/.gitkeep
 reports/*
 !reports/.gitkeep
 artifacts/*

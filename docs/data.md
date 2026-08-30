@@ -38,5 +38,14 @@ No real dataset should be synthesized and presented as if it were real.
 
 - Format: Parquet (`prop_alpha.data.loader.save_parquet` / `load_parquet`)
 - Query: DuckDB over Parquet views (`prop_alpha.data.loader.query`)
-- Directory convention (spec §77): `data/raw` → `data/features` (bronze/silver/gold
-  tiers are reserved for later phases once a real ingestion pipeline exists)
+- Directory convention (spec §77): `data/raw` → `data/features` for the
+  synthetic-data core pipeline (Phases 1-10). The `bronze`/`silver`/`gold`
+  tiers reserved here for "later phases once a real ingestion pipeline
+  exists" are now superseded by the Data Feed extension's own, more
+  specific tier structure — see `docs/data_feed_extension.md` and
+  `prop_alpha.data.lake.DataLakePaths` (`data/lake/{raw,normalized,
+  curated,features,outcomes,snapshots,metadata}/`, extension spec §6),
+  kept at its own root rather than reusing `data/raw`/`data/features` so
+  real-provider ingestion can never collide with the synthetic pipeline's
+  files. `data/bronze`/`data/silver`/`data/gold` remain as empty,
+  unused placeholders from that original reservation.
