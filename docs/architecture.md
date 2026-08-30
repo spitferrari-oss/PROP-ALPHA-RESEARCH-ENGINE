@@ -105,13 +105,14 @@ execution/live layer, no multi-agent research loop. Those are later phases
 src/prop_alpha/
 ├── config.py         # pydantic EngineConfig — no hardcoded parameters
 ├── data/              # schema, synthetic generator, quality gate, parquet/duckdb loader
+│   └── live/            # Data Feed extension: provider-agnostic Live Data Engine (connection/subscription/recorder/event router/health)
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
 ├── discovery/               # condition library, combinatorial setup generator, quick screening, symbolic regression, Hypothesis Ledger
 ├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
 ├── paper/                    # Shadow Mode replay, Live/Paper Monitor, Alpha Decay Monitor, PSI drift detection
-├── providers/               # Data Feed extension: provider ABCs + Databento historical adapter (see docs/data_feed_extension.md)
+├── providers/               # Data Feed extension: provider ABCs + Databento historical/live adapters (see docs/data_feed_extension.md)
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics

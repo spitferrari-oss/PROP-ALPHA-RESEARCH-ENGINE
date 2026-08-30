@@ -105,15 +105,81 @@ data, market state, signals, and paper/shadow simulation.
   fake `databento` module injected into `sys.modules`, since the real
   package genuinely isn't installed in this environment).
 
+**Phase C — Databento Live Adapter (extension §152 Phase C, §12-16)**
+- `data/live/` — the provider-agnostic Live Data Engine extension §12
+  names, so a future vendor's live adapter reuses these instead of
+  reimplementing connection management per vendor:
+  - `connection_manager.py`: `ConnectionManager` drives any `Connectable`
+    (connect/disconnect) through `DISCONNECTED -> CONNECTING -> CONNECTED
+    -> STALE/RECONNECTING -> ...` (extension §13). `BackoffPolicy` gives
+    exponential backoff capped at a max delay; `heartbeat_timeout_seconds`
+    plus `is_stale()`/`check_health()` implement stale-feed detection —
+    any live message counts as a heartbeat (`on_heartbeat()`), not just an
+    explicit heartbeat frame. `clock`/`sleep_fn` are injectable so tests
+    never depend on real time.
+  - `subscription_manager.py`: `SubscriptionManager` keyed on
+    `(provider, instrument, schema)` — a second `subscribe_live` for an
+    already-active key raises `DuplicateSubscriptionError` rather than
+    silently opening a second connection (extension §13's "Non deve
+    creare connessioni multiple accidentalmente").
+  - `recorder.py`: `LiveMessageEnvelope` carries `timestamp_exchange`,
+    `timestamp_provider`, `timestamp_received`, and `timestamp_normalized`
+    as four distinct fields — `build_envelope` derives `normalized` as
+    exchange -> provider -> received (in that priority) and computes
+    `latency_ms` against whichever of exchange/provider is available,
+    never overwriting the exchange timestamp with the local one (§15).
+    Every timestamp field must be timezone-aware or construction raises
+    (§16/§17: UTC is the canonical internal reference). `LiveRecorder`
+    records through a pluggable, append-only sink — the default JSONL
+    sink mirrors the Hypothesis Ledger/Audit Trail pattern; a Parquet/
+    DuckDB sink is Phase G's job.
+  - `event_router.py`: `EventRouter` is deliberately in-process, not a
+    message broker (extension §126 explicitly says prepare for one later,
+    don't add one now) — handlers register for an exact
+    `(provider, instrument, schema)` or any wildcard left `None`, and a
+    handler matching more than one key still fires once per event.
+  - `buffer.py` / `health.py`: `MessageBuffer` is a bounded ring buffer
+    computing `messages_per_second`/`sequence_gaps`; `compute_feed_health`
+    combines a `ConnectionManager` + `MessageBuffer` into the `FeedHealth`
+    snapshot the eventual Data Center dashboard (Phase M) will render —
+    one source of truth, not tracked twice.
+- `providers/databento/live.py`: `DatabentoLiveMixin` implements
+  `subscribe_live` on top of the Live Data Engine above. `live_client` is
+  dependency-injected exactly like the historical adapter's `client`, so
+  every test runs without network access (extension §134/§136); the real
+  `databento.Live` client is imported lazily. Its exact call shape
+  (`subscribe`/`add_callback`/`start`/`stop`) follows `databento-python`'s
+  documented callback-based usage as best known when this was written —
+  flagged in the module docstring as needing verification against the
+  installed SDK before real use, since this environment has no network
+  access to check it live. `_coerce_timestamp` accepts either a decoded
+  `datetime` or a raw nanosecond-epoch int for `ts_event`/`ts_recv`,
+  since which one Databento's SDK hands back depends on version/decoding
+  options.
+- `providers/databento/__init__.py`: `DatabentoProvider` combines
+  `DatabentoHistoricalMixin` (Phase B) and `DatabentoLiveMixin` (Phase C)
+  into the first genuinely complete `FuturesDataProvider` in this repo —
+  confirmed by a test that it satisfies `isinstance(provider, FuturesDataProvider)`.
+- 45 new tests across `tests/test_live_*.py` (connection manager, dedup,
+  buffer rate/gap math, recorder timestamp policy + JSONL sink, event
+  router dispatch/dedup, health snapshot) and
+  `tests/test_databento_live.py`/`test_databento_provider.py` (subscribe/
+  record/route/duplicate-reject/close via a fake live client, both
+  provider-unavailable failure paths, and the combined provider).
+
 ## What's not built yet
 
-Everything from Phase C onward. Concretely, per the extension's own §152
-order: the Databento live adapter with connection management (Phase C,
-§12-16), data normalization into the canonical schema with raw immutability
+Everything from Phase D onward. Concretely, per the extension's own §152
+order: data normalization into the canonical schema with raw immutability
 and dataset manifests (Phase D, §6-9), the data quality engine and 0-100
-`DATA_QUALITY_SCORE` (Phase E, §19-20), the local live recorder (Phase F,
-§14-15), the partitioned Parquet/DuckDB storage layer (Phase G, §6/§10-11),
-the GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
+`DATA_QUALITY_SCORE` (Phase E, §19-20), the partitioned Parquet/DuckDB
+storage layer (Phase G, §6/§10-11) — note: the §14-15 live-message
+envelope/timestamp-policy Phase F was meant to cover is already built as
+part of Phase C's shared Live Data Engine (`data/live/recorder.py`), since
+a live adapter without any recording path would be untestable; what
+remains under "Phase F" is CLI/config wiring (`pae data record`,
+`recording.yaml`'s snapshot-frequency/outcome-horizon settings, §101),
+not the recorder itself — the GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
 variable only, options normalization and the options snapshot/level models
 (Phase I, §28-29), futures/options timestamp synchronization (Phase J,
 §35-36), the options feature engine including GEX regime classification
