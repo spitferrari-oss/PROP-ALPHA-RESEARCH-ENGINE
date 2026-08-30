@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=7.4",
 ]
+databento = [
+    "databento>=0.30",
+]
 
 [project.scripts]
 pae = "prop_alpha.cli:app"
