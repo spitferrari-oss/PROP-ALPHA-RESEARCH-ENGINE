@@ -109,6 +109,20 @@ class MLConfig(BaseModel):
     min_oos_trades: int = 15
 
 
+class AgentsConfig(BaseModel):
+    """Multi-Agent Research Architecture parameters (spec §58-60): the
+    thresholds the Statistician/Critic/Risk agents check against — never
+    hardcoded in the agent modules themselves (spec §80/§116).
+    """
+    min_trades_for_sample_gate: int = 100
+    max_acceptable_p_breach: float = 0.20
+    min_acceptable_p_payout: float = 0.40
+    dsr_overfit_threshold: float = 0.5
+    pbo_overfit_threshold: float = 0.5
+    regime_fragile_negative_fraction: float = 0.5
+    baseline_correlation_threshold: float = 0.7
+
+
 class RiskConfig(BaseModel):
     risk_per_trade: float = 0.005
     max_trades_day: int = 3
@@ -142,6 +156,7 @@ class EngineConfig(BaseModel):
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     ml: MLConfig = Field(default_factory=MLConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     prop: PropFirmConfig = Field(default_factory=PropFirmConfig)

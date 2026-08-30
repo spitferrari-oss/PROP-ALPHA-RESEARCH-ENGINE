@@ -20,4 +20,6 @@ experiments/*
 !experiments/.gitkeep
 research_memory/hypotheses/*
 !research_memory/hypotheses/.gitkeep
+research_memory/audit/*
+!research_memory/audit/.gitkeep
 .DS_Store

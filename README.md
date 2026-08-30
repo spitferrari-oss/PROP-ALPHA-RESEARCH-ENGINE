@@ -6,19 +6,19 @@ account constraints — optimizing for **Expected Payout**, not raw backtest
 return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
-This repository implements **Phase 1 (Foundation)** through **Phase 8 (ML
-Meta-Alpha)** of the production specification: a working, reproducible,
-tested vertical slice through the whole pipeline — data →
+This repository implements **Phase 1 (Foundation)** through **Phase 9
+(Agentic Research)** of the production specification: a working,
+reproducible, tested vertical slice through the whole pipeline — data →
 session/feature/regime engines → 12 baseline strategies (+ 6 no-edge
 comparators, + combinatorial discovery candidates) → backtest → costs →
 OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting
 control → cost-sensitivity stress test → prop account simulation →
 position sizing & payout-policy optimization → conditional EV by regime →
-ML meta-alpha (P(win) + uncertainty) → ranked report — using a
+ML meta-alpha (P(win) + uncertainty) → Statistician/Critic/Risk
+agents → Supervisor verdict + Audit Trail → ranked report — using a
 clearly-labeled **synthetic** dataset. It is deliberately not the full
-10-phase system (no agentic multi-agent research loop or paper-trading
-shadow mode yet) — see "What's not built yet" below and §137 of the spec
-for the phased plan.
+10-phase system (no paper-trading shadow mode yet) — see "What's not built
+yet" below and §137 of the spec for the phased plan.
 
 ## Quickstart
 
@@ -112,18 +112,25 @@ pae data features
 - Uncertainty Engine (spec §47): ensemble variance — the standard deviation of P(win) across the Random Forest's individual trees — flags high-disagreement trades that a `NO_TRADE` gate would exclude; also exposes `predict_expected_r` (a second Random Forest regressor) for Expected R (spec §46)
 - New report section: "ML Meta-Alpha for `<top alpha>`"
 
-191 unit/property tests, all passing; two full `pae research full-run`
+**Phase 9 — Agentic Research**
+- Multi-Agent Research Architecture (spec §58): four modules with the spec's own named responsibilities, each operating on evidence Phases 1-8 already computed — no LLM calls inside the pipeline, so the whole chain stays deterministic and reproducible
+  - **Statistician Agent** (`agents/statistician.py`, spec §60): mechanically checks 10 of the 12 Research Gates (data valid, hypothesis coherent, sufficient sample, positive OOS, walk-forward robust, cost robust, Monte Carlo acceptable, prop survival acceptable) — `NO_LEAKAGE`, `PARAMETER_ROBUST`, and `PAPER_TRADING_ACCEPTABLE` are explicitly `NOT_EVALUATED` rather than silently passed, since no dedicated engine for them exists yet. A gate reads `NOT_EVALUATED`, never `FAIL`, when the underlying diagnostic simply wasn't run (e.g. `--fast` mode skips walk-forward/cost-sensitivity) — caught and fixed during this phase's own verification, see below
+  - **Risk Agent** (`agents/risk_agent.py`): checks position-sizing feasibility and realized drawdown against `prop.max_total_loss`
+  - **Critic / Adversarial Agent** (`agents/critic.py`, spec §59): actively looks for reasons the result might be false — low sample, overfitting risk (from DSR/PBO), regime fragility (from the conditional-EV-by-regime table), execution sensitivity (from the cost-sensitivity sweep), and hidden correlation with a trivial baseline's daily P&L
+  - **Supervisor Agent** (`agents/supervisor.py`, spec §58/§128): the only component authorized to issue a verdict, and it never says bare "PASS" — `PASSES_ALL_EVALUATED_GATES` vs `RESEARCH_FAIL`, with an explicit disclaimer naming every `NOT_EVALUATED` gate and stating the system must never declare an alpha "real-money ready" on its own
+- Audit Trail (spec §129, `agents/audit.py`): every Supervisor verdict — pass or fail — is appended to `research_memory/audit/audit_trail.jsonl` with experiment ID, hypothesis, dataset/config hashes, result summary, decision, and reasons, mirroring the Phase 7 Hypothesis Ledger's append-only pattern
+- New report section: "Supervisor Verdict for `<top alpha>`" with the full gate table, critic findings, and blocking reasons
+
+228 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
-byte-identical reports (spec §75), unaffected by the Phase 7 refactor that
-factored shared data/feature/regime prep out into `cli._prepare_dataset`
-for reuse by both `full-run` and `discover`, or by Phase 8's added
-Random-Forest-based meta-model (seeded, so it reproduces exactly too). A
-full run over 250 synthetic days with all 18 strategies takes ~40s with
-`--fast`, ~3 minutes with the full Phase 4 walk-forward + cost-sensitivity
-gates enabled (default) — the ML Meta-Alpha step adds negligible time on
-top of the existing per-alpha diagnostics; `pae research discover` with
-the default 150-candidate search takes ~5.5 minutes
-(`discovery.max_candidates` in config trades search breadth for speed).
+byte-identical reports (spec §75) and identical Audit Trail entries — the
+whole agentic layer is deterministic. A full run over 250 synthetic days
+with all 18 strategies takes ~40s with `--fast` (all Statistician
+walk-forward/cost gates correctly read `NOT_EVALUATED`, not `FAIL`, in
+this mode), ~4.5 minutes with the full Phase 4 gates enabled (default);
+`pae research discover` with the default 150-candidate search takes ~5.5
+minutes (`discovery.max_candidates` in config trades search breadth for
+speed).
 
 ## What's not built yet
 
@@ -161,10 +168,18 @@ alternative and needed no new dependency; scikit-learn's
 `GradientBoostingClassifier` would be a closer stand-in for a future pass),
 sequence models (LSTM/Temporal CNN/Transformer, spec §45's explicit
 "later" tier), conformal prediction (spec §47 lists it as an alternative
-uncertainty method to the ensemble-variance approach built), meta-alpha for
-more than the #1-ranked alpha at a time, symbolic regression or ML
-discovery feeding back into the Setup Generator's condition library
-automatically, the multi-agent research loop, and live/paper execution are
-all future phases per §137 of the spec. Do not treat current EV/payout
+uncertainty method to the ensemble-variance approach built), meta-alpha or
+Supervisor review for more than the #1-ranked alpha at a time, symbolic
+regression or ML discovery feeding back into the Setup Generator's
+condition library automatically, actual LLM-driven agents (spec §57's
+Researcher/Analyst/Documentation-Agent/Orchestrator roles reading papers,
+proposing novel experiments, and writing prose reports — the Phase 9
+agents built are deterministic Python evaluating already-computed evidence
+against formalized thresholds, not language models), a Data/Feature/
+Strategy/Portfolio Agent chain (spec §58 names more roles than the four
+built: Statistician, Critic, Risk, Supervisor), and live/paper execution
+are all future phases per §137 of the spec. Do not treat current EV/payout
 numbers as anything other than a pipeline correctness check on synthetic
-data — see `docs/data.md`.
+data, and never treat a `PASSES_ALL_EVALUATED_GATES` Supervisor verdict as
+live-trading clearance — see `docs/data.md` and the verdict's own
+disclaimer.

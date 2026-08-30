@@ -1,10 +1,16 @@
 """CLI entry point `pae` (spec §81, §82)."""
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import typer
 
+from prop_alpha.agents.audit import AuditEntry, AuditTrail
+from prop_alpha.agents.critic import evaluate_critic_findings
+from prop_alpha.agents.risk_agent import evaluate_risk_gates
+from prop_alpha.agents.statistician import evaluate_statistician_gates
+from prop_alpha.agents.supervisor import review
 from prop_alpha.backtest.costs import CostModel
 from prop_alpha.backtest.engine import run_backtest, trades_to_frame
 from prop_alpha.backtest.metrics import compute_day_metrics, compute_trade_metrics, daily_pnl
@@ -185,6 +191,7 @@ def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run
         "family": strategy.meta.family,
         "mechanism": strategy.meta.mechanism,
         "research_status": research_status,
+        "diagnostics_run": wf is not None,
         **trade_metrics,
         **day_metrics,
         "boot_ev_p5": boot["ev_per_day"]["p5"] if boot else float("nan"),
@@ -279,13 +286,15 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
 
     results = []
     alpha_daily_pnl = {}
+    baseline_daily_pnl_by_name = {}
     for strategy in alpha_instances:
         result, dpnl = _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics=not fast)
         results.append(result)
         alpha_daily_pnl[result["alpha_id"]] = dpnl
     for strategy in baseline_instances:
-        result, _ = _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics=False)
+        result, dpnl = _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics=False)
         results.append(result)
+        baseline_daily_pnl_by_name[result["alpha_name"]] = dpnl
 
     # Cross-strategy overfitting diagnostics (spec §30): computed once over
     # the alpha trial pool, not per-strategy — PBO/DSR are statements about
@@ -306,6 +315,7 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
     payout_optimizer_alpha_name = None
     conditional_ev_table = None
     meta_alpha_result = None
+    supervisor_verdict = None
     alpha_results = [r for r in results if r["family"] != "BASELINE"]
     if alpha_results:
         top_alpha_result = rank_alphas(alpha_results)[0]
@@ -336,7 +346,43 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         X_oos, y_oos_win, _ = build_ml_feature_matrix(oos_trades, df_feat)
         meta_alpha_result = evaluate_meta_alpha(X_is, y_is_win, y_is_r, X_oos, y_oos_win, config.ml, seed=config.seed)
 
+        # Multi-Agent Research Architecture (spec §58-60/§128/§129): the
+        # Statistician and Risk Agent mechanically check the Research Gates
+        # against evidence already computed above; the Critic actively
+        # looks for reasons the result might be false; the Supervisor is
+        # the only thing allowed to turn all of that into a verdict, and
+        # every verdict is appended to the Audit Trail regardless of
+        # outcome.
+        statistician_gates = evaluate_statistician_gates(top_alpha_result, config.agents)
+        risk_gates = evaluate_risk_gates(top_alpha_result, payout_optimizer_results, config.prop)
+        critic_findings = evaluate_critic_findings(
+            top_alpha_result, pbo_result, conditional_ev_table,
+            alpha_daily_pnl.get(top_alpha_result["alpha_id"]), baseline_daily_pnl_by_name,
+            unique_days, config.agents,
+        )
+        supervisor_verdict = review(statistician_gates + risk_gates, critic_findings)
+
+        audit_entry = AuditEntry(
+            date=dt.date.today().isoformat(),
+            experiment_id="PENDING",  # filled in once experiment_id is minted below
+            alpha_id=top_alpha_result["alpha_id"],
+            alpha_name=top_alpha_result["alpha_name"],
+            hypothesis=top_alpha_result.get("mechanism", ""),
+            dataset_hash=hash_file(raw_path),
+            config_hash=hash_dict(config.model_dump()),
+            result_summary=(
+                f"n_trades={top_alpha_result['n_trades']}, "
+                f"research_status={top_alpha_result['research_status']}, "
+                f"p_breach={top_alpha_result['p_breach']}, p_payout={top_alpha_result['p_payout']}"
+            ),
+            decision=supervisor_verdict.verdict,
+            reasons=supervisor_verdict.blocking_reasons,
+        )
+
     experiment_id = make_experiment_id()
+    if supervisor_verdict is not None:
+        audit_entry.experiment_id = experiment_id
+        AuditTrail().append(audit_entry)
     meta = {
         "git_commit": git_commit_hash(),
         "config_hash": hash_dict(config.model_dump()),
@@ -353,6 +399,8 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         "conditional_ev_alpha_name": payout_optimizer_alpha_name,
         "meta_alpha_result": meta_alpha_result,
         "meta_alpha_alpha_name": payout_optimizer_alpha_name,
+        "supervisor_verdict": supervisor_verdict,
+        "supervisor_alpha_name": payout_optimizer_alpha_name,
     }
     report_path = generate_report(results, experiment_id, meta, diagnostics=diagnostics, out_dir=out_dir)
     return report_path

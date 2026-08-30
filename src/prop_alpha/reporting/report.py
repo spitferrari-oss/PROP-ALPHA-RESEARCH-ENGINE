@@ -164,6 +164,7 @@ def _diagnostics_section(diagnostics: dict | None) -> list[str]:
         lines.append("")
 
     lines += _meta_alpha_section(diagnostics)
+    lines += _supervisor_section(diagnostics)
 
     return lines
 
@@ -207,6 +208,44 @@ def _meta_alpha_section(diagnostics: dict) -> list[str]:
         f"ensemble uncertainty {result['mean_uncertainty']:.3f}.",
         "",
     ]
+    return lines
+
+
+def _supervisor_section(diagnostics: dict) -> list[str]:
+    verdict = diagnostics.get("supervisor_verdict")
+    alpha_name = diagnostics.get("supervisor_alpha_name")
+    if not verdict:
+        return []
+
+    lines = [
+        f"## Supervisor Verdict for {alpha_name} (spec §58-60, §128-129)",
+        "",
+        f"**{verdict.verdict}**",
+        "",
+        verdict.disclaimer,
+        "",
+        "### Research Gates",
+        "",
+        "| Gate | Status | Detail |",
+        "|---|---|---|",
+    ]
+    for gate in verdict.gates:
+        lines.append(f"| {gate.name} | {gate.status} | {gate.detail} |")
+    lines.append("")
+
+    if verdict.findings:
+        lines += ["### Critic Findings (spec §59)", "", "| Category | Severity | Description |", "|---|---|---|"]
+        for finding in verdict.findings:
+            lines.append(f"| {finding.category} | {finding.severity} | {finding.description} |")
+        lines.append("")
+    else:
+        lines += ["### Critic Findings (spec §59)", "", "No red flags raised by the automated critic.", ""]
+
+    if verdict.blocking_reasons:
+        lines += ["### Blocking Reasons", ""]
+        lines += [f"- {reason}" for reason in verdict.blocking_reasons]
+        lines.append("")
+
     return lines
 
 

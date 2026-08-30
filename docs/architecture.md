@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1-8 slice)
+## Pipeline (Phase 1-9 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -48,6 +48,11 @@ CONDITIONAL EV BY REGIME (prop_alpha.regimes.conditional_ev) — #1-ranked alpha
 ML META-ALPHA (prop_alpha.ml.meta_alpha) — #1-ranked alpha only:
     Logistic Regression baseline + Random Forest, both fit on IS trades,
     calibration (ml.calibration) + ensemble-uncertainty gate evaluated OOS
+    ↓
+MULTI-AGENT REVIEW (prop_alpha.agents) — #1-ranked alpha only:
+    Statistician (statistician.py) + Risk Agent (risk_agent.py) -> gates
+    Critic (critic.py) -> findings
+    Supervisor (supervisor.py) -> verdict, logged to Audit Trail (audit.py)
 ```
 
 `pae research discover` shares the same data/feature/regime prep
@@ -96,6 +101,7 @@ src/prop_alpha/
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
 ├── discovery/               # condition library, combinatorial setup generator, quick screening, symbolic regression, Hypothesis Ledger
 ├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
+├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
 ├── statistics/           # bootstrap, Monte Carlo, walk-forward, PBO, DSR, cost sensitivity
@@ -371,6 +377,69 @@ condition their signals on them.
   there aren't enough trades or only one outcome class is present in the
   training split, and the report renders that explicitly rather than
   fitting a meaningless model or raising.
+
+## Multi-Agent Research Architecture (Phase 9, spec §58-60/§128/§129)
+
+**Deliberately not LLM agents.** Spec §57 describes Researcher/Analyst/
+Critic/Documentation/Orchestrator roles for an LLM; spec §58 chains ten
+named agents down to a Supervisor. Wiring actual LLM calls into this
+pipeline would make every research run non-deterministic and break the
+byte-identical-reproducibility guarantee (spec §75) every phase so far has
+maintained — and spec §128 is explicit that an LLM must never be the sole
+arbiter of statistical validity anyway. So Phase 9 implements the
+*architecture* — clearly separated agents with the spec's own
+responsibilities, a Supervisor that is the only thing allowed to issue a
+verdict, and a permanent Audit Trail — as deterministic Python evaluating
+evidence Phases 1-8 already computed. An LLM (or a human) could later sit
+in front of any one of these agents to interpret its output in prose; none
+of them need one to do their actual job.
+
+- **`agents/gates.py`**: shared `Gate` (name/status/detail) and `Finding`
+  (category/severity/description) types. `Gate.status` is one of `PASS`,
+  `FAIL`, `NOT_EVALUATED` — a distinct third state, not a boolean, because
+  spec §128 requires the system to never quietly treat an unchecked
+  criterion as satisfied.
+- **`agents/statistician.py`** (spec §60): checks 10 of the 12 Research
+  Gates directly against fields already in `alpha_result` (from
+  `cli._evaluate_strategy`) — no new computation, only reading. `NO_LEAKAGE`
+  and `PARAMETER_ROBUST` and `PAPER_TRADING_ACCEPTABLE` are always
+  `NOT_EVALUATED` (no engine exists for them yet). `WALK_FORWARD_ROBUST`
+  and `COST_ROBUST` read the `diagnostics_run` flag on `alpha_result`
+  before deciding `PASS`/`FAIL` vs `NOT_EVALUATED` — this flag was added
+  specifically because the first live test of this phase caught a real
+  bug: with `--fast` (which skips walk-forward/cost-sensitivity), those
+  two gates were reading `FAIL` (`breakeven_cost_profile=None`,
+  `research_status` never reaching `WALK_FORWARD`) as if the alpha had
+  been tested and failed, when it had never been tested at all. Regression
+  test: `test_diagnostics_not_run_marks_wf_and_cost_gates_not_evaluated_not_fail`.
+- **`agents/risk_agent.py`**: two checks the Statistician doesn't cover —
+  did *any* Payout Optimizer policy manage to size a real position
+  (`SIZING_FEASIBLE`), and does the realized trade sequence's max drawdown
+  stay inside `prop.max_total_loss` (`DRAWDOWN_WITHIN_LIMITS`) — distinct
+  from the Statistician's Monte-Carlo-simulated P(breach), which is about
+  many simulated paths, not this one realized sequence.
+- **`agents/critic.py`** (spec §59): findings, not gates — a `HIGH`
+  severity finding blocks the Supervisor's verdict, `LOW`/`MEDIUM` are
+  always surfaced but never block. Checks: `LOW_SAMPLE` (trade count),
+  `OVERFIT_RISK` (DSR below threshold, or pool-level PBO above it),
+  `REGIME_FRAGILE` (majority of regimes in the conditional-EV table show
+  negative EV/trade), `EXECUTION_SENSITIVE` (breakeven cost profile is
+  `None` or only `optimistic`), and `HIDDEN_CORRELATION` (the top alpha's
+  daily P&L correlates > threshold with a trivial baseline's, via the same
+  `statistics.pbo.build_pnl_matrix` used for PBO — reused rather than
+  hand-rolled to keep the day-alignment logic in one place).
+- **`agents/supervisor.py`** (spec §58/§128): aggregates gates + findings
+  into `PASSES_ALL_EVALUATED_GATES` or `RESEARCH_FAIL` — never a bare
+  "PASS". The verdict's `disclaimer` always names every `NOT_EVALUATED`
+  gate and states outright that this system must never declare an alpha
+  "real-money ready" on its own; a `NOT_EVALUATED` gate can never by
+  itself cause `RESEARCH_FAIL` (only an evaluated `FAIL` or a `HIGH`
+  critic finding does).
+- **`agents/audit.py`** (spec §129): every Supervisor verdict — pass or
+  fail — is appended to `research_memory/audit/audit_trail.jsonl`
+  (experiment ID, hypothesis, dataset/config hashes, result summary,
+  decision, reasons), mirroring the Phase 7 `HypothesisLedger`'s
+  append-only pattern; a past decision is never rewritten, only added to.
 
 ## Key design decisions
 
