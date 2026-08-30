@@ -3,8 +3,11 @@
 An autonomous quantitative research laboratory for discovering, testing,
 falsifying, and validating intraday trading strategies under real prop-firm
 account constraints — optimizing for **Expected Payout**, not raw backtest
-return. See `docs/architecture.md` for the full design and `docs/data.md`
-for the data policy.
+return. See `docs/architecture.md` for the full design, `docs/data.md`
+for the data policy, and `docs/data_feed_extension.md` for the in-progress
+Data Feed + Options Intelligence Layer extension (real Databento/GEXBOT
+infrastructure, built separately from and on top of the 10-phase core
+below).
 
 This repository implements all **10 phases** of the production
 specification's phased roadmap (§137), Foundation through Paper Trading: a
