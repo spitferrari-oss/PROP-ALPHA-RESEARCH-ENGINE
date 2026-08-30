@@ -214,11 +214,47 @@ data, market state, signals, and paper/shadow simulation.
   and bars/trades/book normalization including the timestamp-policy
   validation.
 
+**Phase E — Data Quality Engine (extension §152 Phase E, §19-20)**
+- `data/quality_engine.py`: `evaluate_batch_quality` runs the full
+  extension §19 checklist against any historical/batch frame (bars,
+  trades, or quotes) and returns a graduated 0-100 `DATA_QUALITY_SCORE`
+  (§20) instead of a bare pass/fail — a handful of glitches in a large
+  dataset costs a small, proportional penalty rather than failing the
+  whole dataset outright. Distinct from `data.quality.validate_ohlcv`
+  (the original Phase 1 gate the core synthetic-data pipeline still uses
+  as a strict must-pass check before any backtest) — this module is for
+  the extension's real-provider data and covers checks Phase 1 never
+  needed: crossed/locked book, impossible spreads, sequence gaps,
+  abnormal timestamp jumps, contract mismatch. Every check is
+  column-presence-aware (`CheckResult.applicable`) — a check that doesn't
+  apply to the frame it's given (e.g. crossed-book on a bars-only frame)
+  contributes nothing to the score rather than fabricating a result for
+  data that was never there (§51-52).
+  - `evaluate_live_quality` folds Phase C's already-computed
+    `data.live.health.FeedHealth` (stale-feed signal) and a
+    malformed-payload count into a batch-style report over the same
+    window's buffered messages — no live-specific logic is duplicated
+    from the Live Data Engine.
+  - `is_blocked` implements extension §103's `blocked_on` flags as hard
+    stops, independent of the graduated score: a single sequence gap (say)
+    blocks regardless of how good the overall score still looks, matching
+    the spec's own semantics for that field.
+- `data/quality_config.py`: `DataQualityConfig` — exactly extension §103's
+  fields (`minimum_score_for_research/paper/live`, `stale_thresholds`,
+  `blocked_on`), kept out of the engine module per spec §80/§116, same
+  discipline as `config.PaperTradingConfig`/`AgentsConfig`.
+- 28 new tests (`tests/test_quality_config.py`, `tests/test_quality_engine.py`):
+  every check individually (duplicate/out-of-order/missing timestamps,
+  invalid prices, negative volume, crossed/locked book, impossible
+  spreads, sequence gaps, abnormal jumps, contract mismatch), severity
+  bands at their exact boundaries, not-applicable behavior when required
+  columns are absent, live quality folding in stale-feed/malformed-payload,
+  and `is_blocked`'s independence from the score.
+
 ## What's not built yet
 
-Everything from Phase E onward. Concretely, per the extension's own §152
-order: the data quality engine and 0-100 `DATA_QUALITY_SCORE` (Phase E,
-§19-20); what remains of the storage layer (Phase G, §6/§10-11) now that
+Everything from Phase F onward. Concretely, per the extension's own §152
+order: what remains of the storage layer (Phase G, §6/§10-11) now that
 Phase D built the directory structure, manifests, and write-once
 enforcement — the DuckDB query layer over the data lake, `pae data ingest`
 CLI orchestration (incremental download/resume/retry/dedup), compression
