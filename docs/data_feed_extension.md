@@ -251,18 +251,46 @@ data, market state, signals, and paper/shadow simulation.
   columns are absent, live quality folding in stale-feed/malformed-payload,
   and `is_blocked`'s independence from the score.
 
+**Phase F — Local Recorder (extension §152 Phase F, §14/§101)**
+- `data/recording_config.py`: `RecordingConfig` — exactly extension §101's
+  fields (`enabled`, `canonical_timezone`, `futures_snapshot_frequency`,
+  `options_snapshot_frequency`, `outcome_horizons`), with YAML round-trip
+  matching `DatasetManifest`'s pattern from Phase D. "Questi sono valori
+  iniziali, non dogmi" (§101) — every field is meant to be overridden.
+- `data/live/session.py`: `record_live_session` is the piece that was
+  missing after Phase C — something that actually drives a bounded
+  recording window against a provider's `subscribe_live`, rather than
+  only being exercised directly by unit tests. It builds the `LiveRecorder`
+  (Phase C) pointed at the correct data-lake `raw` partition (Phase D's
+  `DataLakePaths.partition_path`), hands it to a caller-supplied
+  `provider_factory` (so this module stays provider-agnostic — the caller
+  decides *which* `FuturesDataProvider` gets the recorder), subscribes,
+  waits for `duration_seconds` via an injectable `sleep_fn`, and closes
+  the subscription in a `finally` block so a `KeyboardInterrupt` mid-sleep
+  still leaves the connection cleanly closed. `config.enabled=False` is a
+  legitimate no-op — no subscription opened, no file created.
+- New CLI command `pae data record` (extension §104): wraps
+  `record_live_session` with `DatabentoProvider`. Requires
+  `DATABENTO_API_KEY` and the `databento` package to actually run — not
+  exercised by the test suite for that reason (§134/§136); verified
+  manually end-to-end that it fails with the same clear `RuntimeError`
+  Phase B/C already produce when the package/key is missing, rather than
+  a bare traceback from deep inside the provider.
+- 7 new tests (`tests/test_recording_config.py`, `tests/test_live_session.py`):
+  config defaults/YAML round-trip, a fake-provider recording session
+  writing the correct partitioned JSONL and message count, handle-close-on-
+  interrupt via a raising `sleep_fn`, the non-positive-duration guard, and
+  the disabled-config no-op.
+
 ## What's not built yet
 
-Everything from Phase F onward. Concretely, per the extension's own §152
+Everything from Phase G onward. Concretely, per the extension's own §152
 order: what remains of the storage layer (Phase G, §6/§10-11) now that
 Phase D built the directory structure, manifests, and write-once
 enforcement — the DuckDB query layer over the data lake, `pae data ingest`
 CLI orchestration (incremental download/resume/retry/dedup), compression
 tuning, and actually wiring the `curated`/`features`/`outcomes`/
-`snapshots` tiers beyond `raw`/`normalized`; what remains of Phase F now
-that Phase C's shared `data/live/recorder.py` already covers §14-15's
-envelope/timestamp policy — CLI wiring (`pae data record`) and
-`recording.yaml` config (snapshot frequency, outcome horizons, §101); the
+`snapshots` tiers beyond `raw`/`normalized`; the
 GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
 variable only, options normalization and the options snapshot/level models
 (Phase I, §28-29), futures/options timestamp synchronization (Phase J,
@@ -278,7 +306,16 @@ without real API keys or network access (§134-140). Also within Phase B's
 own remit but not yet built: a real exchange holiday calendar for
 `get_trading_calendar`, and a genuine Databento `Historical` client
 integration test behind an opt-in marker (only the dependency-injected
-fake-client tests exist today, per §134/§136's CI requirement).
+fake-client tests exist today, per §134/§136's CI requirement). Also
+within Phase F's own remit but not yet built: `pae options record`
+(depends on Phase H's GEXBOT adapter existing first), deriving fixed-
+frequency `snapshots`-tier bars from raw tick data at
+`RecordingConfig.futures_snapshot_frequency` (the recorder today writes
+every native message as-is, not resampled — a real design decision left
+to Phase G/L once the data lake's `snapshots` tier is actually wired up),
+and `pae data ingest`'s incremental-download/resume/retry semantics for
+*historical* backfill (Phase G) as distinct from this phase's *live*
+recording.
 
 Do not assume any options-derived directional claim (e.g. "positive GEX is
 bullish") is built in anywhere in this extension — extension §37/§160 are

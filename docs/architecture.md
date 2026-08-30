@@ -105,13 +105,14 @@ execution/live layer, no multi-agent research loop. Those are later phases
 src/prop_alpha/
 ├── config.py         # pydantic EngineConfig — no hardcoded parameters
 ├── data/              # schema, synthetic generator, quality gate, parquet/duckdb loader
-│   ├── live/            # Data Feed extension: provider-agnostic Live Data Engine (connection/subscription/recorder/event router/health)
+│   ├── live/            # Data Feed extension: provider-agnostic Live Data Engine (connection/subscription/recorder/event router/health/session)
 │   ├── lake.py          # Data Feed extension: data lake directory structure (raw/normalized/curated/features/outcomes/snapshots/metadata)
 │   ├── manifest.py      # Data Feed extension: DatasetManifest (spec §9)
 │   ├── immutable_store.py # Data Feed extension: write-once storage + append-only dataset ledger (spec §7-8)
 │   ├── normalize.py     # Data Feed extension: cross-provider bars/trades schema unification (spec §6)
 │   ├── quality_engine.py # Data Feed extension: graduated 0-100 DATA_QUALITY_SCORE across bars/trades/quotes (spec §19-20)
-│   └── quality_config.py # Data Feed extension: quality thresholds + blocked_on flags (spec §103)
+│   ├── quality_config.py # Data Feed extension: quality thresholds + blocked_on flags (spec §103)
+│   └── recording_config.py # Data Feed extension: RecordingConfig (spec §101)
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime

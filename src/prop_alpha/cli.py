@@ -124,6 +124,55 @@ def data_features(
     typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
 
 
+@data_app.command("record")
+def data_record(
+    instrument: str = typer.Option(..., help="Generic instrument symbol (e.g. NQ) — see providers.databento.symbology"),
+    level: str = typer.Option("L1", help="DataLevel to subscribe at: L1, L2, L3, or L4"),
+    duration_seconds: float = typer.Option(30.0, help="How long to record; Ctrl+C stops early"),
+    lake_root: str = typer.Option("data/lake", help="Data lake root (extension spec §6)"),
+    recording_config: str = typer.Option(None, help="Path to a YAML RecordingConfig; defaults built in if omitted"),
+) -> None:
+    """Data Feed extension (§14/§101, Phase F): shadow-record a live
+    Databento feed to the local data lake's `raw` tier. Requires
+    `DATABENTO_API_KEY` and the `databento` package
+    (`pip install 'prop-alpha-engine[databento]'`) — this command is not
+    exercised by the test suite for that reason (extension §134/§136);
+    `data.live.session.record_live_session` is, via an injected fake
+    provider.
+    """
+    from prop_alpha.data.lake import DataLakePaths
+    from prop_alpha.data.live.session import record_live_session
+    from prop_alpha.data.recording_config import RecordingConfig
+    from prop_alpha.providers.base import DataLevel
+    from prop_alpha.providers.databento import DatabentoProvider
+    from prop_alpha.providers.databento.symbology import DEFAULT_SCHEMA_BY_LEVEL
+
+    data_level = DataLevel(level)
+    config = RecordingConfig.from_yaml(recording_config) if recording_config else RecordingConfig()
+    lake = DataLakePaths(root=Path(lake_root))
+
+    try:
+        result = record_live_session(
+            provider_factory=lambda recorder: DatabentoProvider(recorder=recorder),
+            provider_name="databento",
+            instrument=instrument,
+            level=data_level,
+            schema_for_path=DEFAULT_SCHEMA_BY_LEVEL[data_level],
+            lake=lake,
+            duration_seconds=duration_seconds,
+            config=config,
+        )
+    except KeyboardInterrupt:
+        typer.echo("Recording interrupted.")
+        raise typer.Exit(code=0)
+
+    if not result.recorded:
+        typer.echo("Recording disabled (recording.enabled=false) — nothing written.")
+    else:
+        typer.echo(f"Recorded {result.message_count} messages to {result.output_path}")
+    typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
+
+
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:
     """Backtest one strategy and run its statistical validation gates (spec
     §60 Research Gates): OOS split, bootstrap, Monte Carlo/prop simulation,
