@@ -123,6 +123,23 @@ class AgentsConfig(BaseModel):
     baseline_correlation_threshold: float = 0.7
 
 
+class PaperTradingConfig(BaseModel):
+    """Shadow Mode / Live-Paper Monitor parameters (spec §97-101, §132).
+    Shadow mode replays the already-computed OOS holdout as its trade
+    source (spec §123 forbids fabricating a live feed this environment
+    doesn't have) — these thresholds govern how that replay is monitored
+    and classified, kept out of the monitor/decay/drift modules themselves
+    per spec §80/§116.
+    """
+    psi_drift_threshold: float = 0.2
+    drift_features: list[str] = Field(
+        default_factory=lambda: ["volatility_percentile", "relative_volume", "vwap_z"]
+    )
+    decay_min_shadow_days_for_ci: int = 5
+    decay_bootstrap_n: int = 1000
+    min_shadow_trades_for_calibration: int = 10
+
+
 class RiskConfig(BaseModel):
     risk_per_trade: float = 0.005
     max_trades_day: int = 3
@@ -157,6 +174,7 @@ class EngineConfig(BaseModel):
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     ml: MLConfig = Field(default_factory=MLConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    paper: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     prop: PropFirmConfig = Field(default_factory=PropFirmConfig)

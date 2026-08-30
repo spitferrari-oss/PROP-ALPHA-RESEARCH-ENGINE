@@ -164,6 +164,7 @@ def _diagnostics_section(diagnostics: dict | None) -> list[str]:
         lines.append("")
 
     lines += _meta_alpha_section(diagnostics)
+    lines += _paper_trading_section(diagnostics)
     lines += _supervisor_section(diagnostics)
 
     return lines
@@ -208,6 +209,63 @@ def _meta_alpha_section(diagnostics: dict) -> list[str]:
         f"ensemble uncertainty {result['mean_uncertainty']:.3f}.",
         "",
     ]
+    return lines
+
+
+def _paper_trading_section(diagnostics: dict) -> list[str]:
+    monitor = diagnostics.get("paper_monitor_result")
+    decay = diagnostics.get("decay_result")
+    drift = diagnostics.get("drift_findings")
+    alpha_name = diagnostics.get("paper_trading_alpha_name")
+    if not monitor and not decay:
+        return []
+
+    lines = [
+        f"## Paper Trading / Shadow Mode for {alpha_name} (spec §97-101, §132)",
+        "",
+        "No live feed exists in this environment (spec §123 forbids fabricating one), so the "
+        "shadow log below replays the same out-of-sample trades already used for statistical "
+        "validation, rather than genuinely new forward data — this demonstrates the monitoring "
+        "mechanism end-to-end, and is not a claim of real forward performance.",
+        "",
+    ]
+
+    if monitor and monitor.get("status") == "OK":
+        lines += [
+            f"**Live/Paper Monitor:** {monitor['n_shadow_trades']} shadow trades | "
+            f"Expected R {monitor['expected_r']:.3f} vs. Actual mean R {monitor['actual_mean_r']:.3f} "
+            f"(prediction error {monitor['r_prediction_error']:+.3f}) | Win rate {monitor['win_rate']:.1%}",
+            "",
+        ]
+        cal = monitor.get("calibration")
+        if cal:
+            lines += [
+                f"Model probability calibration on shadow trades: Brier score {cal['brier_score']:.3f}, "
+                f"log loss {cal['log_loss']:.3f}, ECE {cal['ece']:.3f} ({cal['n_obs']} obs).",
+                "",
+            ]
+    elif monitor:
+        lines += [f"**Live/Paper Monitor:** {monitor.get('status')} — no shadow trades available.", ""]
+
+    if decay:
+        lines += [
+            f"**Alpha Decay Monitor (spec §98):** level **{decay['level']}** over "
+            f"{decay['n_shadow_days']} shadow days — {decay['reason']}",
+            "",
+        ]
+
+    if drift:
+        lines += [
+            "**Drift Detection (spec §99, PSI only):**",
+            "",
+            "| Feature | PSI | Drifted? |",
+            "|---|---:|---|",
+        ]
+        for f in drift:
+            psi_str = "n/a" if f["psi"] != f["psi"] else f"{f['psi']:.3f}"
+            lines.append(f"| {f['feature']} | {psi_str} | {'YES' if f['drifted'] else 'no'} |")
+        lines.append("")
+
     return lines
 
 

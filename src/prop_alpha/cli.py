@@ -23,6 +23,10 @@ from prop_alpha.discovery.pipeline import run_discovery
 from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.ml.features import build_ml_feature_matrix
 from prop_alpha.ml.meta_alpha import evaluate_meta_alpha
+from prop_alpha.paper.decay import classify_alpha_decay
+from prop_alpha.paper.drift import compute_feature_drift
+from prop_alpha.paper.monitor import evaluate_paper_monitor
+from prop_alpha.paper.shadow import build_shadow_log
 from prop_alpha.prop.simulator import simulate_prop_paths
 from prop_alpha.regimes.conditional_ev import conditional_ev_by_regime
 from prop_alpha.regimes.pipeline import build_regime_features
@@ -315,6 +319,9 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
     payout_optimizer_alpha_name = None
     conditional_ev_table = None
     meta_alpha_result = None
+    paper_monitor_result = None
+    decay_result = None
+    drift_findings = None
     supervisor_verdict = None
     alpha_results = [r for r in results if r["family"] != "BASELINE"]
     if alpha_results:
@@ -346,6 +353,31 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         X_oos, y_oos_win, _ = build_ml_feature_matrix(oos_trades, df_feat)
         meta_alpha_result = evaluate_meta_alpha(X_is, y_is_win, y_is_r, X_oos, y_oos_win, config.ml, seed=config.seed)
 
+        # Shadow Mode / Paper Trading (spec §97-101, §132): no live feed
+        # exists in this environment, so the shadow log replays the same
+        # OOS trades used above rather than fabricating a fake live stream
+        # (spec §123) — see paper/shadow.py's docstring for the honest
+        # limitation this implies.
+        meta_model = meta_alpha_result.get("model") if meta_alpha_result else None
+        shadow_log = build_shadow_log(oos_trades, X_oos, meta_model, top_alpha_result)
+        paper_monitor_result = evaluate_paper_monitor(
+            shadow_log, min_trades_for_calibration=config.paper.min_shadow_trades_for_calibration,
+        )
+        decay_result = classify_alpha_decay(
+            shadow_log,
+            is_ev_per_day=top_alpha_result.get("ev_per_day_dollars"),
+            is_boot_ev_p5=top_alpha_result.get("boot_ev_p5"),
+            is_boot_ev_p95=top_alpha_result.get("boot_ev_p95"),
+            seed=config.seed,
+            n_boot=config.paper.decay_bootstrap_n,
+            min_days_for_ci=config.paper.decay_min_shadow_days_for_ci,
+        )
+        drift_findings = compute_feature_drift(
+            X_is, X_oos,
+            feature_columns=config.paper.drift_features,
+            psi_threshold=config.paper.psi_drift_threshold,
+        )
+
         # Multi-Agent Research Architecture (spec §58-60/§128/§129): the
         # Statistician and Risk Agent mechanically check the Research Gates
         # against evidence already computed above; the Critic actively
@@ -353,12 +385,15 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         # the only thing allowed to turn all of that into a verdict, and
         # every verdict is appended to the Audit Trail regardless of
         # outcome.
-        statistician_gates = evaluate_statistician_gates(top_alpha_result, config.agents)
+        statistician_gates = evaluate_statistician_gates(
+            top_alpha_result, config.agents, paper_monitor_result, decay_result,
+        )
         risk_gates = evaluate_risk_gates(top_alpha_result, payout_optimizer_results, config.prop)
         critic_findings = evaluate_critic_findings(
             top_alpha_result, pbo_result, conditional_ev_table,
             alpha_daily_pnl.get(top_alpha_result["alpha_id"]), baseline_daily_pnl_by_name,
             unique_days, config.agents,
+            decay_result=decay_result, drift_findings=drift_findings,
         )
         supervisor_verdict = review(statistician_gates + risk_gates, critic_findings)
 
@@ -399,6 +434,10 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
         "conditional_ev_alpha_name": payout_optimizer_alpha_name,
         "meta_alpha_result": meta_alpha_result,
         "meta_alpha_alpha_name": payout_optimizer_alpha_name,
+        "paper_monitor_result": paper_monitor_result,
+        "decay_result": decay_result,
+        "drift_findings": drift_findings,
+        "paper_trading_alpha_name": payout_optimizer_alpha_name,
         "supervisor_verdict": supervisor_verdict,
         "supervisor_alpha_name": payout_optimizer_alpha_name,
     }

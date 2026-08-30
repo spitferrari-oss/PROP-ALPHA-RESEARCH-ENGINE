@@ -1,6 +1,6 @@
 # Architecture
 
-## Pipeline (Phase 1-9 slice)
+## Pipeline (Phase 1-10 slice)
 
 ```text
 RAW DATA (synthetic, spec §123)
@@ -49,9 +49,18 @@ ML META-ALPHA (prop_alpha.ml.meta_alpha) — #1-ranked alpha only:
     Logistic Regression baseline + Random Forest, both fit on IS trades,
     calibration (ml.calibration) + ensemble-uncertainty gate evaluated OOS
     ↓
+SHADOW MODE / PAPER TRADING (prop_alpha.paper) — #1-ranked alpha only:
+    shadow log built by replaying the same OOS trades (shadow.py)
+    ↓
+    Live/Paper Monitor (monitor.py) — Expected vs Actual R, calibration
+    Alpha Decay Monitor (decay.py) — GREEN/YELLOW/ORANGE/RED vs IS bootstrap CI
+    Drift Detection (drift.py) — PSI between IS and shadow feature distributions
+    ↓
 MULTI-AGENT REVIEW (prop_alpha.agents) — #1-ranked alpha only:
     Statistician (statistician.py) + Risk Agent (risk_agent.py) -> gates
-    Critic (critic.py) -> findings
+        (Statistician's PAPER_TRADING_ACCEPTABLE gate reads the Alpha Decay
+        Monitor's level)
+    Critic (critic.py) -> findings (incl. ALPHA_DECAY, FEATURE_DRIFT)
     Supervisor (supervisor.py) -> verdict, logged to Audit Trail (audit.py)
 ```
 
@@ -101,6 +110,7 @@ src/prop_alpha/
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime
 ├── discovery/               # condition library, combinatorial setup generator, quick screening, symbolic regression, Hypothesis Ledger
 ├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
+├── paper/                    # Shadow Mode replay, Live/Paper Monitor, Alpha Decay Monitor, PSI drift detection
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
@@ -378,6 +388,76 @@ condition their signals on them.
   training split, and the report renders that explicitly rather than
   fitting a meaningless model or raising.
 
+## Paper Trading / Shadow Mode (Phase 10, spec §97-101/§131-133)
+
+**No live feed exists in this environment.** Spec §123 forbids presenting
+fabricated data as real market evidence, so `paper/shadow.build_shadow_log`
+replays the #1-ranked alpha's already-computed OOS trades (the same ones
+used for the Phase 4/8 statistical validation and ML Meta-Alpha layers) as
+the shadow log's source, rather than inventing a synthetic "live" stream.
+Every report section and docstring in this layer says so explicitly — this
+demonstrates the monitoring mechanism end-to-end, and must never be read as
+a claim of genuine forward performance. A real deployment would feed this
+same monitor/decay/drift machinery from newly-collected forward data
+gathered after promotion (spec §131 Deployment Stage 3+) instead.
+
+- **`paper/shadow.py`** (spec §132 — "compute what would have been done
+  without sending real orders"): `build_shadow_log` takes the OOS trade
+  frame, the matching OOS feature matrix (`X_oos`, already built for ML
+  Meta-Alpha), the fitted `MetaAlphaModel` (or `None` when Phase 8 had
+  insufficient data to fit one), and the alpha's own `alpha_result` dict.
+  It attaches a single constant `expected_r` (the alpha's in-sample
+  expectancy) per row, alongside each trade's realized `actual_r`/`pnl` and
+  — when a model was fit and its row count matches — the model's own
+  `predict_proba_rf` output as `model_probability`. Deliberately does *not*
+  include an expected-vs-actual slippage column (also named in spec §100):
+  the backtest/shadow cost model is deterministic, so the two figures would
+  always be identical and the comparison would be theater.
+- **`paper/monitor.py`** (spec §100/§101): `evaluate_paper_monitor` reports
+  `n_shadow_trades`, `expected_r` vs. `actual_mean_r` (and their difference,
+  `r_prediction_error`), `win_rate`, and — once at least
+  `paper.min_shadow_trades_for_calibration` shadow trades carry a
+  `model_probability` — reuses `ml.calibration.compute_calibration_metrics`
+  (Brier score, log loss, ECE) against the shadow trades' actual outcomes,
+  the same diagnostic Phase 8 computed OOS, now computed on the shadow
+  period instead.
+- **`paper/decay.py`** (spec §97/§98): `classify_alpha_decay` compares the
+  shadow period's own daily P&L against the alpha's Phase 4 in-sample
+  bootstrap CI (`boot_ev_p5`/`boot_ev_p95`, already in `alpha_result`) and
+  assigns one of four mechanically-checkable levels: **RED** if the shadow
+  period's own 90% bootstrap CI for EV/day is entirely negative, **ORANGE**
+  if that CI straddles zero, **YELLOW** if shadow EV/day has degraded more
+  than roughly one IS-bootstrap sigma (approximated from the already-computed
+  90% CI's p5-p95 span, ~3.29 sigma for a normal distribution) below IS
+  EV/day, else **GREEN**. Spec §98 also names a fifth level, **RETIRED**
+  ("economic thesis invalidated / not automatable") — that is a judgment
+  call about *why* an edge decayed, not a statistic, so this module never
+  auto-assigns it (spec §128); a RED classification is the signal a human
+  should look at that question.
+- **`paper/drift.py`** (spec §99): `compute_psi` bins the "expected"
+  (in-sample) array into quantiles and measures how much the "actual"
+  (shadow) array's distribution across those same bins has shifted — the
+  standard Population Stability Index, PSI > 0.2 conventionally read as
+  significant drift. `compute_feature_drift` applies this to a handful of
+  configured features (`paper.drift_features`, default
+  `volatility_percentile`/`relative_volume`/`vwap_z`) by reusing the IS/OOS
+  ML feature matrices already built for Meta-Alpha (`X_is`/`X_oos`) rather
+  than re-extracting features from raw bars. Only PSI is implemented; spec
+  §99 also names KS, Jensen-Shannon divergence, Wasserstein distance, and
+  change-point detection, and drift categories beyond feature drift
+  (regime/performance/volatility/liquidity/execution) — none of those are
+  built, a documented gap rather than a claim of full coverage.
+- **`config.PaperTradingConfig`**: every threshold above
+  (`psi_drift_threshold`, `drift_features`, `decay_min_shadow_days_for_ci`,
+  `decay_bootstrap_n`, `min_shadow_trades_for_calibration`) lives in config,
+  not hardcoded in `paper/*.py`, following the same discipline as
+  `AgentsConfig`'s thresholds (spec §80/§116).
+- Wired into `cli._run_full_research` immediately after the ML Meta-Alpha
+  block (same `oos_trades`/`X_oos` already computed there, no recomputation)
+  and feeds both the Statistician's `PAPER_TRADING_ACCEPTABLE` gate and the
+  Critic's `ALPHA_DECAY`/`FEATURE_DRIFT` findings — see below. New report
+  section: "Paper Trading / Shadow Mode for `<top alpha>`".
+
 ## Multi-Agent Research Architecture (Phase 9, spec §58-60/§128/§129)
 
 **Deliberately not LLM agents.** Spec §57 describes Researcher/Analyst/
@@ -399,11 +479,16 @@ of them need one to do their actual job.
   `FAIL`, `NOT_EVALUATED` — a distinct third state, not a boolean, because
   spec §128 requires the system to never quietly treat an unchecked
   criterion as satisfied.
-- **`agents/statistician.py`** (spec §60): checks 10 of the 12 Research
+- **`agents/statistician.py`** (spec §60): checks 11 of the 12 Research
   Gates directly against fields already in `alpha_result` (from
-  `cli._evaluate_strategy`) — no new computation, only reading. `NO_LEAKAGE`
-  and `PARAMETER_ROBUST` and `PAPER_TRADING_ACCEPTABLE` are always
-  `NOT_EVALUATED` (no engine exists for them yet). `WALK_FORWARD_ROBUST`
+  `cli._evaluate_strategy`) plus the Phase 10 paper-trading evidence — no new
+  computation of its own, only reading. `NO_LEAKAGE` and `PARAMETER_ROBUST`
+  are always `NOT_EVALUATED` (no engine exists for them yet); as of Phase 10,
+  `PAPER_TRADING_ACCEPTABLE` is `NOT_EVALUATED` only when there are no shadow
+  trades to replay, otherwise `PASS` iff the Alpha Decay Monitor's level is
+  GREEN (see "Paper Trading / Shadow Mode" above — spec §133's
+  live-eligibility bar is strict, so YELLOW/ORANGE/RED all read `FAIL`, not
+  a partial pass). `WALK_FORWARD_ROBUST`
   and `COST_ROBUST` read the `diagnostics_run` flag on `alpha_result`
   before deciding `PASS`/`FAIL` vs `NOT_EVALUATED` — this flag was added
   specifically because the first live test of this phase caught a real
@@ -424,10 +509,14 @@ of them need one to do their actual job.
   `OVERFIT_RISK` (DSR below threshold, or pool-level PBO above it),
   `REGIME_FRAGILE` (majority of regimes in the conditional-EV table show
   negative EV/trade), `EXECUTION_SENSITIVE` (breakeven cost profile is
-  `None` or only `optimistic`), and `HIDDEN_CORRELATION` (the top alpha's
+  `None` or only `optimistic`), `HIDDEN_CORRELATION` (the top alpha's
   daily P&L correlates > threshold with a trivial baseline's, via the same
   `statistics.pbo.build_pnl_matrix` used for PBO — reused rather than
-  hand-rolled to keep the day-alignment logic in one place).
+  hand-rolled to keep the day-alignment logic in one place), and, as of
+  Phase 10, `ALPHA_DECAY` (severity scales with the Alpha Decay Monitor's
+  level: HIGH for RED, MEDIUM for ORANGE, LOW for YELLOW, nothing for GREEN)
+  and `FEATURE_DRIFT` (MEDIUM when any monitored feature's PSI exceeds
+  `paper.psi_drift_threshold` between the in-sample and shadow periods).
 - **`agents/supervisor.py`** (spec §58/§128): aggregates gates + findings
   into `PASSES_ALL_EVALUATED_GATES` or `RESEARCH_FAIL` — never a bare
   "PASS". The verdict's `disclaimer` always names every `NOT_EVALUATED`

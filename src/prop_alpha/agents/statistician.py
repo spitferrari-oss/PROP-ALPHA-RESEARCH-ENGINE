@@ -11,7 +11,12 @@ from prop_alpha.agents.gates import Gate
 from prop_alpha.config import AgentsConfig
 
 
-def evaluate_statistician_gates(alpha_result: dict, config: AgentsConfig | None = None) -> list[Gate]:
+def evaluate_statistician_gates(
+    alpha_result: dict,
+    config: AgentsConfig | None = None,
+    paper_monitor_result: dict | None = None,
+    decay_result: dict | None = None,
+) -> list[Gate]:
     config = config or AgentsConfig()
     gates: list[Gate] = []
 
@@ -94,8 +99,21 @@ def evaluate_statistician_gates(alpha_result: dict, config: AgentsConfig | None 
     gates.append(Gate("PROP_SURVIVAL_ACCEPTABLE", "PASS" if prop_ok else "FAIL",
                        f"p_payout={p_payout} (threshold>={config.min_acceptable_p_payout})"))
 
-    # GATE 12 — Paper trading acceptable: Phase 10 (shadow mode) not built yet.
-    gates.append(Gate("PAPER_TRADING_ACCEPTABLE", "NOT_EVALUATED",
-                       "No paper-trading/shadow-mode engine (spec §132, Phase 10) — not run."))
+    # GATE 12 — Paper trading acceptable (spec §132, §98): the shadow log
+    # replays the OOS holdout (see paper/shadow.py) — NOT_EVALUATED when
+    # there's nothing to replay yet, otherwise PASS only for a GREEN decay
+    # classification (spec §133's live-eligibility bar is strict: YELLOW/
+    # ORANGE/RED all mean an unresolved concern, not a pass).
+    if paper_monitor_result is None or paper_monitor_result.get("status") != "OK" or decay_result is None:
+        gates.append(Gate("PAPER_TRADING_ACCEPTABLE", "NOT_EVALUATED",
+                           "No shadow-mode trades available this pass (paper monitor not run or empty)."))
+    else:
+        level = decay_result.get("level")
+        paper_ok = level == "GREEN"
+        gates.append(Gate(
+            "PAPER_TRADING_ACCEPTABLE", "PASS" if paper_ok else "FAIL",
+            f"shadow decay level={level} over {decay_result.get('n_shadow_days', 0)} shadow days "
+            f"({decay_result.get('reason', '')})",
+        ))
 
     return gates

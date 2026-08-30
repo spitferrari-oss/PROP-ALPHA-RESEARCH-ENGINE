@@ -79,6 +79,35 @@ def test_nan_p_breach_does_not_pass():
     assert _gate_by_name(gates, "MONTE_CARLO_ACCEPTABLE").status == "FAIL"
 
 
+def test_paper_trading_acceptable_passes_for_green_decay():
+    gates = evaluate_statistician_gates(
+        _good_alpha_result(),
+        paper_monitor_result={"status": "OK"},
+        decay_result={"level": "GREEN", "n_shadow_days": 20, "reason": "within expected range"},
+    )
+    assert _gate_by_name(gates, "PAPER_TRADING_ACCEPTABLE").status == "PASS"
+
+
+def test_paper_trading_acceptable_fails_for_non_green_decay():
+    for level in ("YELLOW", "ORANGE", "RED"):
+        gates = evaluate_statistician_gates(
+            _good_alpha_result(),
+            paper_monitor_result={"status": "OK"},
+            decay_result={"level": level, "n_shadow_days": 20, "reason": "degraded"},
+        )
+        assert _gate_by_name(gates, "PAPER_TRADING_ACCEPTABLE").status == "FAIL"
+
+
+def test_paper_trading_acceptable_not_evaluated_without_shadow_data():
+    gates = evaluate_statistician_gates(_good_alpha_result())
+    assert _gate_by_name(gates, "PAPER_TRADING_ACCEPTABLE").status == "NOT_EVALUATED"
+
+    gates2 = evaluate_statistician_gates(
+        _good_alpha_result(), paper_monitor_result={"status": "NO_SHADOW_TRADES"}, decay_result=None,
+    )
+    assert _gate_by_name(gates2, "PAPER_TRADING_ACCEPTABLE").status == "NOT_EVALUATED"
+
+
 def test_diagnostics_not_run_marks_wf_and_cost_gates_not_evaluated_not_fail():
     # e.g. `--fast` mode: walk-forward/cost-sensitivity were never computed.
     # These gates must read NOT_EVALUATED, never FAIL — a gate can only

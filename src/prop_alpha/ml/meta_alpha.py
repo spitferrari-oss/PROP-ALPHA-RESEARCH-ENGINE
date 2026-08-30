@@ -112,7 +112,7 @@ def evaluate_meta_alpha(
     n_oos = len(X_oos)
 
     if len(X_is) < config.min_samples_leaf * 4 or n_oos < config.min_oos_trades or y_is_win.nunique() < 2:
-        return {"status": "INSUFFICIENT_DATA", "n_is": len(X_is), "n_oos": n_oos}
+        return {"status": "INSUFFICIENT_DATA", "n_is": len(X_is), "n_oos": n_oos, "model": None}
 
     model = MetaAlphaModel(config, seed=seed).fit(X_is, y_is_win, y_is_r)
 
@@ -143,4 +143,5 @@ def evaluate_meta_alpha(
         "n_oos_uncertain": n_uncertain,
         "pct_oos_uncertain": (n_uncertain / n_oos) if n_oos else float("nan"),
         "mean_uncertainty": float(np.mean(uncertainty)) if n_oos else float("nan"),
+        "model": model,
     }

@@ -86,6 +86,39 @@ def test_hidden_correlation_flagged_for_near_identical_pnl():
     assert any(f.category == "HIDDEN_CORRELATION" for f in findings)
 
 
+def test_alpha_decay_red_flagged_high_severity():
+    findings = evaluate_critic_findings(
+        _clean_alpha_result(), {"pbo": 0.1}, None, None, None, [],
+        decay_result={"level": "RED", "reason": "persistently negative shadow EV/day"},
+    )
+    high = [f for f in findings if f.category == "ALPHA_DECAY" and f.severity == "HIGH"]
+    assert len(high) == 1
+
+
+def test_alpha_decay_green_not_flagged():
+    findings = evaluate_critic_findings(
+        _clean_alpha_result(), {"pbo": 0.1}, None, None, None, [],
+        decay_result={"level": "GREEN", "reason": "within expected range"},
+    )
+    assert not any(f.category == "ALPHA_DECAY" for f in findings)
+
+
+def test_feature_drift_flagged_when_any_feature_drifted():
+    findings = evaluate_critic_findings(
+        _clean_alpha_result(), {"pbo": 0.1}, None, None, None, [],
+        drift_findings=[{"feature": "vwap_z", "psi": 0.5, "drifted": True}],
+    )
+    assert any(f.category == "FEATURE_DRIFT" for f in findings)
+
+
+def test_no_feature_drift_finding_when_nothing_drifted():
+    findings = evaluate_critic_findings(
+        _clean_alpha_result(), {"pbo": 0.1}, None, None, None, [],
+        drift_findings=[{"feature": "vwap_z", "psi": 0.05, "drifted": False}],
+    )
+    assert not any(f.category == "FEATURE_DRIFT" for f in findings)
+
+
 def test_no_hidden_correlation_for_independent_pnl():
     days = _days(80)
     rng = np.random.default_rng(2)

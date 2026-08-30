@@ -6,19 +6,20 @@ account constraints — optimizing for **Expected Payout**, not raw backtest
 return. See `docs/architecture.md` for the full design and `docs/data.md`
 for the data policy.
 
-This repository implements **Phase 1 (Foundation)** through **Phase 9
-(Agentic Research)** of the production specification: a working,
-reproducible, tested vertical slice through the whole pipeline — data →
-session/feature/regime engines → 12 baseline strategies (+ 6 no-edge
+This repository implements all **10 phases** of the production
+specification's phased roadmap (§137), Foundation through Paper Trading: a
+working, reproducible, tested vertical slice through the whole pipeline —
+data → session/feature/regime engines → 12 baseline strategies (+ 6 no-edge
 comparators, + combinatorial discovery candidates) → backtest → costs →
 OOS split → walk-forward → bootstrap/Monte Carlo → PBO/DSR overfitting
 control → cost-sensitivity stress test → prop account simulation →
 position sizing & payout-policy optimization → conditional EV by regime →
 ML meta-alpha (P(win) + uncertainty) → Statistician/Critic/Risk
-agents → Supervisor verdict + Audit Trail → ranked report — using a
-clearly-labeled **synthetic** dataset. It is deliberately not the full
-10-phase system (no paper-trading shadow mode yet) — see "What's not built
-yet" below and §137 of the spec for the phased plan.
+agents → Supervisor verdict + Audit Trail → shadow-mode paper trading
+(Live/Paper Monitor, Alpha Decay Monitor, PSI drift detection) → ranked
+report — using a clearly-labeled **synthetic** dataset. "All 10 phases" is
+about breadth of the pipeline, not depth within each: many individual gaps
+named throughout the spec remain open — see "What's not built yet" below.
 
 ## Quickstart
 
@@ -121,16 +122,51 @@ pae data features
 - Audit Trail (spec §129, `agents/audit.py`): every Supervisor verdict — pass or fail — is appended to `research_memory/audit/audit_trail.jsonl` with experiment ID, hypothesis, dataset/config hashes, result summary, decision, and reasons, mirroring the Phase 7 Hypothesis Ledger's append-only pattern
 - New report section: "Supervisor Verdict for `<top alpha>`" with the full gate table, critic findings, and blocking reasons
 
-228 unit/property tests, all passing; two full `pae research full-run`
+**Phase 10 — Paper Trading**
+- Shadow Mode engine (spec §132, `paper/shadow.py`): "compute what would have
+  been done without sending real orders" — with no live feed in this
+  environment and spec §123 forbidding a fabricated one, the shadow log
+  replays the #1-ranked alpha's already-computed OOS trades (the same ones
+  Phase 4 validated) rather than inventing a fake live stream; documented as
+  an honest stand-in, not real forward performance. Expected vs. actual
+  *slippage* (also named in spec §100) is deliberately not compared — the
+  backtest's cost model is deterministic, so the two would always be
+  identical
+- Live/Paper Monitor (spec §100/§101, `paper/monitor.py`): Expected R vs.
+  Actual R, win rate, and — when the ML Meta-Alpha model was fit — Brier
+  score/log loss/ECE calibration of its P(win) against the shadow trades'
+  actual outcomes (reusing `ml.calibration`, applied here to the shadow
+  period instead of the OOS split it was original fit against)
+- Alpha Decay Monitor (spec §97/§98, `paper/decay.py`): classifies the
+  shadow period GREEN/YELLOW/ORANGE/RED against the Phase 4 in-sample
+  bootstrap CI already computed for the same alpha — RED (persistently
+  negative shadow EV/day) is the signal a human should look at spec §98's
+  fifth level, RETIRED ("economic thesis invalidated"), which is a judgment
+  call this module never auto-assigns
+- Drift Detection via PSI (spec §99, `paper/drift.py`): Population Stability
+  Index between the in-sample and shadow-period distributions of a handful
+  of key market-state features (`volatility_percentile`, `relative_volume`,
+  `vwap_z` by default, configurable via `paper.drift_features`) — PSI only;
+  KS/Jensen-Shannon/Wasserstein/change-point (also named in spec §99) are
+  not built
+- Closes the `PAPER_TRADING_ACCEPTABLE` Research Gate (spec §60, gate 12 of
+  12): `NOT_EVALUATED` when there are no shadow trades to replay, otherwise
+  `PASS` only for a GREEN decay classification — spec §133's live-eligibility
+  bar is strict, so YELLOW/ORANGE/RED all read `FAIL`, not a partial pass
+- New Critic findings: `ALPHA_DECAY` (severity scales with decay level) and
+  `FEATURE_DRIFT` (any monitored feature's PSI above `paper.psi_drift_threshold`)
+- New report section: "Paper Trading / Shadow Mode for `<top alpha>`"
+
+253 unit/property tests, all passing; two full `pae research full-run`
 executions (18 strategies) with the same config/seed still produce
 byte-identical reports (spec §75) and identical Audit Trail entries — the
-whole agentic layer is deterministic. A full run over 250 synthetic days
-with all 18 strategies takes ~40s with `--fast` (all Statistician
-walk-forward/cost gates correctly read `NOT_EVALUATED`, not `FAIL`, in
-this mode), ~4.5 minutes with the full Phase 4 gates enabled (default);
-`pae research discover` with the default 150-candidate search takes ~5.5
-minutes (`discovery.max_candidates` in config trades search breadth for
-speed).
+whole agentic + paper-trading layer is deterministic. A full run over 250
+synthetic days with all 18 strategies takes ~40s with `--fast` (all
+Statistician walk-forward/cost gates correctly read `NOT_EVALUATED`, not
+`FAIL`, in this mode), ~3 minutes with the full Phase 4 gates enabled
+(default); `pae research discover` with the default 150-candidate search
+takes ~5.5 minutes (`discovery.max_candidates` in config trades search
+breadth for speed).
 
 ## What's not built yet
 
@@ -177,9 +213,18 @@ proposing novel experiments, and writing prose reports — the Phase 9
 agents built are deterministic Python evaluating already-computed evidence
 against formalized thresholds, not language models), a Data/Feature/
 Strategy/Portfolio Agent chain (spec §58 names more roles than the four
-built: Statistician, Critic, Risk, Supervisor), and live/paper execution
-are all future phases per §137 of the spec. Do not treat current EV/payout
-numbers as anything other than a pipeline correctness check on synthetic
-data, and never treat a `PASSES_ALL_EVALUATED_GATES` Supervisor verdict as
-live-trading clearance — see `docs/data.md` and the verdict's own
-disclaimer.
+built: Statistician, Critic, Risk, Supervisor), a genuine live data feed for
+Shadow Mode (Phase 10's shadow log replays the already-computed OOS holdout
+instead — see the Phase 10 section above), the complementary drift tests
+spec §99 names beyond PSI (KS, Jensen-Shannon divergence, Wasserstein
+distance, change-point detection) and drift categories beyond feature drift
+(regime/performance/volatility/liquidity/execution drift), the RETIRED
+alpha-decay level (spec §98 — a judgment call about *why* an edge decayed,
+deliberately never auto-assigned), and Deployment Stages 1-5 / real
+order-routing execution beyond shadow-mode simulation (spec §131) are all
+gaps beyond this vertical slice. Do not treat current EV/payout numbers as
+anything other than a pipeline correctness check on synthetic data, and
+never treat a `PASSES_ALL_EVALUATED_GATES` Supervisor verdict — even with
+`PAPER_TRADING_ACCEPTABLE` passing — as live-trading clearance: it means
+this system's current checks found nothing wrong, not that a human has
+signed off — see `docs/data.md` and the verdict's own disclaimer.

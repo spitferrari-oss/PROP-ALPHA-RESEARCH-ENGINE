@@ -23,6 +23,8 @@ def evaluate_critic_findings(
     baseline_daily_pnl_by_name: dict[str, pd.Series] | None,
     all_days: list,
     config: AgentsConfig | None = None,
+    decay_result: dict | None = None,
+    drift_findings: list[dict] | None = None,
 ) -> list[Finding]:
     config = config or AgentsConfig()
     findings: list[Finding] = []
@@ -82,5 +84,25 @@ def evaluate_critic_findings(
                         f"Daily P&L correlation {corr:.2f} with the trivial baseline '{name}' — this "
                         f"alpha may just be rediscovering it, not an independent edge.",
                     ))
+
+    if decay_result is not None:
+        level = decay_result.get("level")
+        reason = decay_result.get("reason", "")
+        if level == "RED":
+            findings.append(Finding("ALPHA_DECAY", "HIGH", f"Shadow-mode decay level RED — {reason}"))
+        elif level == "ORANGE":
+            findings.append(Finding("ALPHA_DECAY", "MEDIUM", f"Shadow-mode decay level ORANGE — {reason}"))
+        elif level == "YELLOW":
+            findings.append(Finding("ALPHA_DECAY", "LOW", f"Shadow-mode decay level YELLOW — {reason}"))
+
+    if drift_findings:
+        drifted = [f for f in drift_findings if f.get("drifted")]
+        if drifted:
+            detail = ", ".join(f"{f['feature']} (PSI={f['psi']:.2f})" for f in drifted)
+            findings.append(Finding(
+                "FEATURE_DRIFT", "MEDIUM",
+                f"{len(drifted)}/{len(drift_findings)} monitored features show PSI above the "
+                f"configured drift threshold between the in-sample and shadow periods: {detail}.",
+            ))
 
     return findings
