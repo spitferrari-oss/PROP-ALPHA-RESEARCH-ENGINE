@@ -7,9 +7,10 @@ from prop_alpha.data.immutable_store import (
     DataImmutabilityError,
     next_version_path,
     read_ledger,
+    write_dataset,
     write_versioned_parquet,
 )
-from prop_alpha.data.manifest import DatasetManifest
+from prop_alpha.data.manifest import DatasetManifest, compute_sha256
 
 
 def test_write_versioned_parquet_creates_file_manifest_and_ledger_entry(tmp_path):
@@ -91,3 +92,38 @@ def test_next_version_path_increments_when_file_exists(tmp_path):
 
 def test_read_ledger_on_missing_file_returns_empty_list(tmp_path):
     assert read_ledger(tmp_path / "does_not_exist") == []
+
+
+def test_write_dataset_writes_file_and_manifest_from_actual_bytes(tmp_path):
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    path = tmp_path / "raw" / "2024-01-01.parquet"
+    metadata_dir = tmp_path / "metadata"
+
+    written_path, manifest = write_dataset(
+        df, path, metadata_dir,
+        dataset_id="ds-ingest-1", provider="databento", instrument="NQ", venue="GLBX.MDP3",
+        start=dt.date(2024, 1, 1), end=dt.date(2024, 1, 1), timezone="UTC",
+        schema="ohlcv-1m", granularity="1m",
+    )
+
+    assert written_path == path
+    assert path.exists()
+    assert manifest.sha256 == compute_sha256(path)  # hashed from the real written bytes
+    assert (metadata_dir / "ds-ingest-1.yaml").exists()
+    ledger = read_ledger(metadata_dir)
+    assert ledger[0]["id"] == "ds-ingest-1"
+
+
+def test_write_dataset_refuses_overwrite(tmp_path):
+    df = pd.DataFrame({"a": [1]})
+    path = tmp_path / "raw" / "2024-01-01.parquet"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"already here")
+
+    with pytest.raises(DataImmutabilityError):
+        write_dataset(
+            df, path, tmp_path / "metadata",
+            dataset_id="ds-ingest-2", provider="databento", instrument="NQ", venue="GLBX.MDP3",
+            start=dt.date(2024, 1, 1), end=dt.date(2024, 1, 1), timezone="UTC",
+            schema="ohlcv-1m", granularity="1m",
+        )

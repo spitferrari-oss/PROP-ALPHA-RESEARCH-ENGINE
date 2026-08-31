@@ -170,7 +170,54 @@ def data_record(
         typer.echo("Recording disabled (recording.enabled=false) — nothing written.")
     else:
         typer.echo(f"Recorded {result.message_count} messages to {result.output_path}")
-    typer.echo(f"wrote features for {len(feats)} bars to {out_path}")
+
+
+@data_app.command("ingest")
+def data_ingest(
+    instrument: str = typer.Option(..., help="Generic instrument symbol (e.g. NQ) — see providers.databento.symbology"),
+    start: str = typer.Option(..., help="Start date, YYYY-MM-DD"),
+    end: str = typer.Option(..., help="End date, YYYY-MM-DD (inclusive)"),
+    level: str = typer.Option("L1", help="DataLevel to fetch at: L1, L2, L3, or L4"),
+    lake_root: str = typer.Option("data/lake", help="Data lake root (extension spec §6)"),
+    max_retries: int = typer.Option(3, help="Retries per day before marking it FAILED"),
+) -> None:
+    """Data Feed extension (§10, Phase G): incremental historical
+    ingestion into the data lake's `raw` tier — one day at a time,
+    resumable (already-written days are skipped), retried, quality-gated.
+    Requires `DATABENTO_API_KEY` and the `databento` package (see `pae
+    data record`'s docstring) — not exercised by the test suite for that
+    reason; `data.ingest.ingest_historical`'s orchestration is, via a
+    scripted fake provider.
+    """
+    from prop_alpha.data.ingest import ingest_historical
+    from prop_alpha.data.lake import DataLakePaths
+    from prop_alpha.providers.base import DataLevel
+    from prop_alpha.providers.databento import DatabentoProvider
+    from prop_alpha.providers.databento.symbology import DEFAULT_SCHEMA_BY_LEVEL
+
+    data_level = DataLevel(level)
+    lake = DataLakePaths(root=Path(lake_root))
+
+    result = ingest_historical(
+        provider=DatabentoProvider(),
+        instrument=instrument,
+        level=data_level,
+        schema=DEFAULT_SCHEMA_BY_LEVEL[data_level],
+        start=dt.date.fromisoformat(start),
+        end=dt.date.fromisoformat(end),
+        lake=lake,
+        max_retries=max_retries,
+    )
+
+    typer.echo(
+        f"Ingest complete: {result.n_written} written, {result.n_skipped_existing} already present, "
+        f"{result.n_quality_blocked} quality-blocked, {result.n_failed} failed."
+    )
+    for day_result in result.days:
+        if day_result.status == "FAILED":
+            typer.echo(f"  FAILED {day_result.date}: {day_result.error}")
+        elif day_result.quality_blocked:
+            typer.echo(f"  WRITTEN but quality-blocked {day_result.date}: {list(day_result.blocked_reasons)}")
 
 
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:

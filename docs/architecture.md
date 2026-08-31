@@ -112,7 +112,9 @@ src/prop_alpha/
 │   ├── normalize.py     # Data Feed extension: cross-provider bars/trades schema unification (spec §6)
 │   ├── quality_engine.py # Data Feed extension: graduated 0-100 DATA_QUALITY_SCORE across bars/trades/quotes (spec §19-20)
 │   ├── quality_config.py # Data Feed extension: quality thresholds + blocked_on flags (spec §103)
-│   └── recording_config.py # Data Feed extension: RecordingConfig (spec §101)
+│   ├── recording_config.py # Data Feed extension: RecordingConfig (spec §101)
+│   ├── lake_query.py    # Data Feed extension: DuckDB query layer over the data lake (spec §6/§10-11)
+│   └── ingest.py         # Data Feed extension: incremental/resumable/retried/quality-gated historical ingestion (spec §10)
 ├── sessions/            # Session Engine: named windows, holidays, half-days (spec §7)
 ├── features/             # price/volume/volatility/VWAP/order-flow/market-structure + volume profile; pipeline.py chains features + session annotation
 ├── regimes/                # rule-based + Gaussian Mixture regime classifiers, transition flags, conditional EV by regime

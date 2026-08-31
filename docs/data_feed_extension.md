@@ -282,15 +282,62 @@ data, market state, signals, and paper/shadow simulation.
   interrupt via a raising `sleep_fn`, the non-positive-duration guard, and
   the disabled-config no-op.
 
+**Phase G — DuckDB/Parquet Storage Layer (extension §152 Phase G, §6/§10-11)**
+- `data/lake_query.py`: `query_tier` runs arbitrary SQL over every parquet
+  file in a tier/provider/instrument/schema as one DuckDB view (`lake`) —
+  a day-partitioned dataset queries exactly like a single file, without a
+  caller enumerating files. `list_partitions`/`tier_glob` back the ingest
+  resume logic below and are usable standalone (e.g. a future `pae data
+  status`). Caught and fixed a real bug while writing this module's own
+  tests: DuckDB rejects a prepared parameter inside `CREATE VIEW`
+  ("Unexpected prepared parameter. This type of statement can't be
+  prepared!") — `query_tier` inlines its (self-constructed, not
+  externally supplied) glob pattern as an escaped string literal instead.
+  `data.loader.query` (Phase 1, untested and uncalled anywhere in this
+  repo) carried the exact same latent bug — fixed there too, with a new
+  regression test (`tests/test_loader.py`) now covering a module that
+  previously had none.
+- `data/ingest.py`: `ingest_historical` implements extension §10's
+  incremental historical download — one day at a time via
+  `FuturesDataProvider.get_historical`, **resumable** (a day whose raw
+  partition already exists is skipped — Phase D's immutability makes
+  "already written" unambiguous), **retried** (linear backoff, configurable
+  `max_retries`), and **quality-gated**: each day's frame is scored by
+  Phase E's `evaluate_batch_quality`/`is_blocked` before being written
+  through Phase D's `write_dataset`. A day that trips extension §103's
+  `blocked_on` flags is still written — raw data is never silently
+  dropped (§7) — but flagged `quality_blocked=True` with its
+  `blocked_reasons` for the caller to act on. A day with no data at all
+  (holiday/weekend) is `SKIPPED_EMPTY` and nothing is written for it —
+  documented as a real, not-yet-closed gap: a re-run currently re-checks
+  that day every time rather than remembering it was already confirmed
+  empty.
+- `data/immutable_store.py` gained `write_dataset` (write-then-hash-then-
+  manifest in one call) alongside Phase D's `write_versioned_parquet`
+  (which requires a manifest, and therefore a file to hash, to already
+  exist) — refactored to share a `_record_manifest` helper; existing
+  Phase D tests pass unchanged.
+- New CLI command `pae data ingest` (extension §104) wraps
+  `ingest_historical` with `DatabentoProvider`. Same "not exercised by the
+  automated suite, requires real credentials" caveat as `pae data record`
+  — the orchestration logic is tested via a scripted fake provider.
+- 19 new tests (`tests/test_lake_query.py`, `tests/test_ingest.py`,
+  `tests/test_loader.py`, plus two added to `tests/test_immutable_store.py`):
+  glob/partition listing, cross-partition SQL queries (including a custom
+  aggregate query and an unfiltered cross-instrument union), the
+  no-match error, resume/retry/failure/empty-day/quality-blocked ingest
+  scenarios, `write_dataset`'s real-bytes hashing, and the `loader.query`
+  regression.
+- Deliberately still out of scope: compression tuning, and actually
+  populating the `curated`/`features`/`outcomes`/`snapshots` tiers beyond
+  `raw`/`normalized` (there's no consumer for them yet — building storage
+  for tiers nothing writes to would be exactly the "codice inutile" §3
+  warns against elsewhere in this spec).
+
 ## What's not built yet
 
-Everything from Phase G onward. Concretely, per the extension's own §152
-order: what remains of the storage layer (Phase G, §6/§10-11) now that
-Phase D built the directory structure, manifests, and write-once
-enforcement — the DuckDB query layer over the data lake, `pae data ingest`
-CLI orchestration (incremental download/resume/retry/dedup), compression
-tuning, and actually wiring the `curated`/`features`/`outcomes`/
-`snapshots` tiers beyond `raw`/`normalized`; the
+Everything from Phase H onward. Concretely, per the extension's own §152
+order: the
 GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
 variable only, options normalization and the options snapshot/level models
 (Phase I, §28-29), futures/options timestamp synchronization (Phase J,

@@ -27,7 +27,12 @@ def query(sql: str, **parquet_paths: str | Path) -> pd.DataFrame:
     con = duckdb.connect(database=":memory:")
     try:
         for name, path in parquet_paths.items():
-            con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet(?)", [str(path)])
+            # DuckDB rejects a prepared parameter inside CREATE VIEW
+            # ("Unexpected prepared parameter. This type of statement
+            # can't be prepared!") — the path is inlined as an escaped
+            # string literal instead of bound with `?`.
+            escaped_path = str(path).replace("'", "''")
+            con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{escaped_path}')")
         return con.execute(sql).fetchdf()
     finally:
         con.close()
