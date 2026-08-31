@@ -122,6 +122,7 @@ src/prop_alpha/
 ├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
 ├── paper/                    # Shadow Mode replay, Live/Paper Monitor, Alpha Decay Monitor, PSI drift detection
 ├── providers/               # Data Feed extension: provider ABCs + Databento historical/live + GEXBOT options adapters (see docs/data_feed_extension.md)
+│   └── mocks.py              #   MockFuturesDataProvider/MockOptionsDataProvider: network-free, seeded, for tests/CI
 ├── options/                  # Data Feed extension: options intelligence subsystem
 │   ├── models.py             #   vendor-agnostic OptionsSnapshot/OptionsLevel (spec §28-29)
 │   ├── normalize.py          #   GexSnapshot -> OptionsSnapshot (spec §28)

@@ -769,12 +769,65 @@ data, market state, signals, and paper/shadow simulation.
   discipline `paper.shadow`'s docstring already commits to for the core
   engine's own shadow mode).
 
+**Mock Providers + CI Integration Tests (extension §134-140, the roadmap's final item)**
+- `providers/mocks.py`: `MockFuturesDataProvider`/`MockOptionsDataProvider`,
+  full implementations of `FuturesDataProvider`/`OptionsDataProvider` — no
+  API keys, no `databento`/`requests` packages, no real network calls.
+  Every real adapter already accepted an injected client/session so its
+  own unit tests never needed these; what was missing was a *shared*,
+  importable pair usable across phases instead of each test file
+  hand-rolling its own narrow local fake. `MockOptionsDataProvider`
+  deliberately routes through the real GEXBOT parsing pipeline
+  (`options.gexbot.parser.parse_snapshot`, `options.normalize.
+  normalize_gex_snapshot`, `options.levels.extract_levels`) rather than
+  building `OptionsSnapshot` objects directly, so a test using it
+  exercises the same parsing/normalization code a real payload would.
+  `get_orderflow` still raises `NotImplementedError`, matching
+  `GexbotOptionsProvider`'s own honesty — order-flow parsing isn't built
+  anywhere in this repo, so the mock doesn't fabricate data for a feature
+  that doesn't exist. `subscribe_live` on both mocks pushes a
+  deterministic, finite burst of messages synchronously rather than
+  spinning a background thread — a mock exists to be fast and
+  deterministic in CI, not to simulate real-time timing. Everything both
+  mocks produce is seeded, reproducible, and clearly synthetic — never
+  presented as real market evidence, the same discipline `data.synthetic.
+  generate_synthetic_ohlcv`/`paper.shadow` already commit to elsewhere.
+- `tests/test_mock_providers.py` (18 tests): ABC compliance, schema/
+  timezone correctness, determinism per seed, `subscribe_live` delivery,
+  `get_levels`/`get_instrument_state`/`get_orderflow`'s honest
+  `NotImplementedError`, and `generate_snapshot_sequence`'s time-ordering.
+- `tests/test_integration_data_extension.py` (6 tests): wires the mocks
+  through the real cross-phase pipeline end to end — ingest (Phase G) ->
+  sync (Phase J) -> GEX/DEX enrichment (Phase P) -> market state (Phase
+  L) -> live shadow proposals logged to a real ledger (Phase O) ->
+  record-then-deterministically-replay a live session (Phases C/F/N) ->
+  a full GEX/futures discovery run logging every candidate to the
+  Hypothesis Ledger (Phase P). This is deliberately not a re-test of any
+  single phase's own unit behavior (each already has one) — it exists to
+  catch what per-phase unit tests can't: that the pieces actually connect
+  (matching column names, matching timestamp conventions, no
+  silently-dropped data) end to end. Building it caught one real bug: the
+  futures mock's live payload originally leaked a raw `pandas.Timestamp`
+  into the message payload, which failed at `LiveRecorder`'s JSONL sink
+  (`json.dumps` doesn't serialize pandas/`datetime` objects) — fixed by
+  isoformat-stringifying the payload's timestamp field, matching what a
+  real wire-format JSON message would actually carry.
+- `.github/workflows/ci.yml`: runs the full test suite (`pytest -q`) on
+  every push and pull request, on Python 3.11 and 3.12 — nothing in it
+  needs a secret or external service, since every real-network-requiring
+  path in this repo (`pae data record`/`ingest`, `pae options snapshot`,
+  `pae data-center status`, `pae replay run`) is already dependency-
+  injectable and covered by unit tests with fakes, not exercised directly
+  by CI.
+- 627 tests passing total. This closes out the extension's entire §152
+  roadmap — Phase A through Phase P, plus this final mock-provider/CI
+  phase.
+
 ## What's not built yet
 
-Everything past the extension's own numbered phases. Concretely: the
-mock-provider/CI integration-test suite required to run all of the above
-without real API keys or network access (§134-140). Also within Phase B's
-own remit but not yet built: a real exchange holiday calendar for
+Everything the extension's own phase order (§152) doesn't cover, plus a
+few gaps each phase's own writeup above already flagged as it went. Also
+within Phase B's own remit but not yet built: a real exchange holiday calendar for
 `get_trading_calendar`, and a genuine Databento `Historical` client
 integration test behind an opt-in marker (only the dependency-injected
 fake-client tests exist today, per §134/§136's CI requirement). Also
