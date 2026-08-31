@@ -471,12 +471,55 @@ data, market state, signals, and paper/shadow simulation.
   both the single-pairing and frame-level APIs, `regime` pass-through, and
   the reported time-difference values.
 
+**Phase K — Options Feature Engine (extension §152 Phase K, §29-34/§37/§67-70)**
+- `options/features.py`: `classify_gex_regime`/`classify_gex_regime_series`
+  (§31) label GEX state — `STRONG_POSITIVE_GAMMA` through
+  `STRONG_NEGATIVE_GAMMA`/`UNKNOWN` — strictly from a *normalized* (z-score,
+  via `normalize_gex_series`) value, never a raw GEX number, per §67's
+  warning that GEX's scale is instrument/notional-dependent. No-Assumption
+  Principle (§37): these are state labels only — nothing here claims what
+  a regime means for price direction; `options.conditional_ev` is where
+  that gets tested empirically, not assumed. `compute_dex_state` (§32)
+  gives magnitude/sign/change/acceleration; `dex_concentration` (also
+  named in §32) is left as an honest all-`NaN` column — it needs a
+  per-strike DEX breakdown GEXBOT's snapshot endpoint doesn't provide.
+  `compute_gex_dynamics` (§33) is plain ΔGEX/Δ²GEX differencing, no
+  interpretation attached.
+- `options/distance.py`: `compute_distance_features`/`compute_level_distances`
+  complete extension §30's distance-to-level features (absolute/
+  percentage/ATR-normalized/volatility-normalized) against the *synced
+  futures price* (Phase J) — the proper version of the "convenience
+  distance" `options.levels.extract_levels` (Phase I) deliberately left
+  as a placeholder, computed only against the options snapshot's own spot.
+- `options/conditional_ev.py`: `conditional_ev_by_gex_regime` is the
+  options-side twin of `regimes.conditional_ev.conditional_ev_by_regime`
+  (core spec §14) — same join/aggregate pattern exactly, over a
+  `sync.cross_market.synchronize_frame` output instead of the futures
+  feature frame, answering extension §69's "EV(alpha|GEXState)."
+- `options/incremental_value.py`: `compute_incremental_value_score`
+  implements extension §70's Options Incremental Alpha Score — rewards
+  OOS EV/stability/calibration/drawdown/Payout Utility improvement,
+  penalizes complexity/data/latency/provider dependency, and is explicit
+  in its own docstring that it's a transparent first-pass heuristic, not
+  a fitted or validated model (there's no labeled "was this worth it"
+  dataset to calibrate against). A non-positive EV delta always resolves
+  to `NON_ESSENTIAL` regardless of every other signal, matching §40's
+  "Does it add value? If not: FEATURE = NON-ESSENTIAL."
+- 26 new tests (`tests/test_options_{features,distance,conditional_ev,
+  incremental_value}.py`): z-score normalization edge cases (too few
+  observations, zero variance), every regime boundary, DEX
+  magnitude/sign/change/acceleration and the honest `NaN` concentration
+  column, GEX delta/delta², all four distance normalizations including
+  the zero-price/zero-ATR/zero-vol guards, conditional-EV grouping/
+  sorting/empty/missing-column/unmatched-trade cases, and the incremental
+  value score's recommendation logic including the "positive EV but high
+  penalty still marginal" and "improvements everywhere but negative EV
+  still non-essential" cases.
+
 ## What's not built yet
 
-Everything from Phase K onward. Concretely, per the extension's own §152
-order: the options feature engine including GEX regime classification
-and the explicit No-Assumption Principle (Phase K, §29-34/§37/§67-70), the
-cross-market `MarketState_t` vector (Phase L, §43-44), the Data Center
+Everything from Phase L onward. Concretely, per the extension's own §152
+order: the cross-market `MarketState_t` vector (Phase L, §43-44), the Data Center
 dashboard (Phase M, §21/§54/§105-109), the deterministic historical replay
 engine (Phase N, §56-58), data-extension live shadow mode with trade
 proposals and human feedback capture (Phase O, §59/§75-80), auto-generated

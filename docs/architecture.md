@@ -126,7 +126,11 @@ src/prop_alpha/
 │   ├── models.py             #   vendor-agnostic OptionsSnapshot/OptionsLevel (spec §28-29)
 │   ├── normalize.py          #   GexSnapshot -> OptionsSnapshot (spec §28)
 │   ├── levels.py             #   Options Level Engine: snapshot -> OptionsLevel objects (spec §29)
-│   └── gexbot/                #   GEXBOT-specific client/auth/parser/models/health
+│   ├── gexbot/                #   GEXBOT-specific client/auth/parser/models/health
+│   ├── features.py            #   GEX regime, DEX state, GEX dynamics (spec §31-33, §37 No-Assumption Principle)
+│   ├── distance.py            #   distance-to-level features (spec §30)
+│   ├── conditional_ev.py      #   EV(alpha|GEXState) (spec §69)
+│   └── incremental_value.py   #   Options Incremental Alpha Score (spec §70)
 ├── sync/                     # Data Feed extension: futures/options synchronization + CrossMarketState (spec §35-36)
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
