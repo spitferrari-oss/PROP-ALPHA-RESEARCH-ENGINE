@@ -74,10 +74,18 @@ def test_get_historical_raises_not_implemented():
         provider.get_historical("SPX", dt.date(2024, 1, 1), dt.date(2024, 1, 2))
 
 
-def test_get_levels_raises_not_implemented():
-    provider = GexbotOptionsProvider(client=_FakeClient(_raw()))
-    with pytest.raises(NotImplementedError):
-        provider.get_levels("SPX")
+def test_get_levels_returns_gamma_flip_and_major_gamma_levels():
+    raw = _raw()
+    raw["gamma_flip"] = 4480.0
+    raw["major_positive_gamma"] = 4550.0
+    provider = GexbotOptionsProvider(client=_FakeClient(raw))
+    levels = provider.get_levels("SPX")
+    types = {level["type"] for level in levels}
+    assert "GAMMA_FLIP" in types
+    assert "MAJOR_GAMMA" in types
+    for level in levels:
+        assert level["underlying"] == "SPX"
+        assert level["source"] == "gexbot"
 
 
 def test_get_orderflow_raises_not_implemented():

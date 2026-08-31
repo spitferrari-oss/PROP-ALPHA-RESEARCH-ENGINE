@@ -122,7 +122,11 @@ src/prop_alpha/
 ├── ml/                      # ML feature matrix, Meta-Alpha model (baseline + Random Forest), calibration diagnostics
 ├── paper/                    # Shadow Mode replay, Live/Paper Monitor, Alpha Decay Monitor, PSI drift detection
 ├── providers/               # Data Feed extension: provider ABCs + Databento historical/live + GEXBOT options adapters (see docs/data_feed_extension.md)
-├── options/                  # Data Feed extension: options intelligence subsystem — options/gexbot/ (client/auth/parser/models/health)
+├── options/                  # Data Feed extension: options intelligence subsystem
+│   ├── models.py             #   vendor-agnostic OptionsSnapshot/OptionsLevel (spec §28-29)
+│   ├── normalize.py          #   GexSnapshot -> OptionsSnapshot (spec §28)
+│   ├── levels.py             #   Options Level Engine: snapshot -> OptionsLevel objects (spec §29)
+│   └── gexbot/                #   GEXBOT-specific client/auth/parser/models/health
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics

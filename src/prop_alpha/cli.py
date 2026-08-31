@@ -62,9 +62,11 @@ app = typer.Typer(help="Prop Alpha Research Engine CLI")
 data_app = typer.Typer(help="Data pipeline commands")
 strategy_app = typer.Typer(help="Strategy backtest/discovery commands")
 research_app = typer.Typer(help="End-to-end research commands")
+options_app = typer.Typer(help="Options intelligence commands (Data Feed extension)")
 app.add_typer(data_app, name="data")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(research_app, name="research")
+app.add_typer(options_app, name="options")
 
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
@@ -218,6 +220,35 @@ def data_ingest(
             typer.echo(f"  FAILED {day_result.date}: {day_result.error}")
         elif day_result.quality_blocked:
             typer.echo(f"  WRITTEN but quality-blocked {day_result.date}: {list(day_result.blocked_reasons)}")
+
+
+@options_app.command("snapshot")
+def options_snapshot(
+    underlying: str = typer.Option(..., help="Underlying ticker (e.g. SPX, NDX, SPY, QQQ)"),
+) -> None:
+    """Data Feed extension (§104, Phase H/I): fetch one GEXBOT snapshot,
+    normalize it into the vendor-agnostic `OptionsSnapshot` (extension
+    §28), and print each metric's value and availability status.
+    Requires `GEXBOT_API_KEY` and the `requests` package (see `pae data
+    record`'s docstring for the equivalent Databento caveat) — not
+    exercised by the test suite for that reason; the normalization
+    pipeline itself is, via an injected fake client
+    (`tests/test_options_normalize.py`, `tests/test_gexbot_provider.py`).
+    """
+    from prop_alpha.providers.gexbot import GexbotOptionsProvider
+
+    provider = GexbotOptionsProvider()
+    snapshot = provider.get_snapshot(underlying)
+
+    typer.echo(f"GEXBOT snapshot for {underlying} at {snapshot['timestamp']}")
+    for name in (
+        "spot", "gex", "dex", "gamma_flip", "major_positive_gamma", "major_negative_gamma",
+        "vanna", "charm", "vomma", "skew", "options_volume", "open_interest",
+    ):
+        metric = snapshot[name]
+        status = metric["availability"]["status"]
+        value = f"{metric['value']:.4g}" if metric["value"] is not None else "n/a"
+        typer.echo(f"  {name:<22} {value:>14}   [{status}]")
 
 
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:

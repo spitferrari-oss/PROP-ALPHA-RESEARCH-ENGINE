@@ -1,38 +1,20 @@
-"""GEXBOT data models (extension spec §26-27): every metric this adapter
-can report is paired with its own `MetricAvailability` — extension §26
-explicitly warns that not every metric is available at the same
-frequency or on the same endpoint, and §27 requires availability/
-timestamp/source/freshness tracked *per metric*, not once for the whole
-snapshot. A metric GEXBOT doesn't currently report is `value=None` with
-`availability.status=UNAVAILABLE` — never silently defaulted to `0`
-(extension §51-52's "zero and missing are never the same thing").
+"""GEXBOT-specific data models (extension spec §26-27): `GexSnapshot` is
+GEXBOT's own parsed shape — `options.normalize.normalize_gex_snapshot`
+(Phase I) converts it into the vendor-agnostic `options.models.OptionsSnapshot`
+every downstream consumer actually depends on.
+
+`AvailabilityStatus`/`MetricAvailability`/`Metric` moved to
+`options.models` in Phase I (they were already provider-agnostic in
+spirit) and are re-exported here for backward compatibility with anything
+still importing them from this module.
 """
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass
-from enum import Enum
 
+from prop_alpha.options.models import AvailabilityStatus, Metric, MetricAvailability
 
-class AvailabilityStatus(str, Enum):
-    AVAILABLE = "AVAILABLE"
-    UNAVAILABLE = "UNAVAILABLE"
-    STALE = "STALE"
-    PARTIAL = "PARTIAL"
-
-
-@dataclass(frozen=True)
-class MetricAvailability:
-    status: AvailabilityStatus
-    timestamp: dt.datetime | None
-    source: str
-    freshness_seconds: float | None
-
-
-@dataclass(frozen=True)
-class Metric:
-    value: float | None
-    availability: MetricAvailability
+__all__ = ["AvailabilityStatus", "MetricAvailability", "Metric", "GexSnapshot"]
 
 
 @dataclass(frozen=True)

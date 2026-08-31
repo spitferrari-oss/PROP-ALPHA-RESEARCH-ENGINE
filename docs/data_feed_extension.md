@@ -393,11 +393,59 @@ data, market state, signals, and paper/shadow simulation.
   provider's ABC conformance plus its three deliberate
   `NotImplementedError`s.
 
+**Phase I — Options Normalization + Snapshot Model (extension §152 Phase I, §28-29)**
+- Promoted `AvailabilityStatus`/`MetricAvailability`/`Metric` out of
+  `options.gexbot.models` (Phase H) into a new vendor-agnostic
+  `options/models.py` — they were already provider-agnostic in spirit
+  (every options provider needs per-metric availability, not just
+  GEXBOT); `options.gexbot.models` now re-exports them for backward
+  compatibility rather than defining a duplicate copy.
+- `options/models.py` also adds the extension §28/§29 shapes:
+  `OptionsSnapshot` (`timestamp`, `underlying`, every §26 metric, plus
+  `orderflow_state` and an `extra: dict[str, Metric] | None` field for
+  the "il modello deve essere estensibile" requirement) and
+  `OptionsLevel`/`LevelType` (§29's `level` object and its seven type
+  values: `GAMMA_FLIP`/`POSITIVE_GAMMA`/`NEGATIVE_GAMMA`/`MAJOR_GAMMA`/
+  `DEX_LEVEL`/`VANNA_LEVEL`/`CHARM_LEVEL`).
+- `options/normalize.py`: `normalize_gex_snapshot` converts GEXBOT's own
+  `GexSnapshot` (Phase H) into the vendor-agnostic `OptionsSnapshot` —
+  the same role `data.normalize` plays for futures data (Phase D). The
+  snapshot-level `timestamp` (distinct from each metric's own
+  `MetricAvailability.timestamp`) defaults to the freshest available
+  per-metric timestamp, or `now()` if nothing is available — never left
+  unset.
+- `options/levels.py`: `extract_levels` turns the level-shaped metrics
+  already in a normalized snapshot (gamma flip, major positive/negative
+  gamma) into `OptionsLevel` objects, with `distance_from_spot` computed
+  against the snapshot's *own* reported spot price — explicitly
+  documented as a convenience distance, not the ATR/volatility-normalized,
+  futures-price-synced distance extension §30 wants (that needs Phase J's
+  synchronization first, and is Phase K's job). `strength` (also named in
+  §29) has no defined derivation yet and stays `None` rather than guessed
+  at. `DEX_LEVEL`/`VANNA_LEVEL`/`CHARM_LEVEL` extraction is also deferred
+  to Phase K.
+- `providers/gexbot/GexbotOptionsProvider` updated to route `get_snapshot`
+  through the new normalization (so its `dict` output now matches
+  `OptionsSnapshot`'s shape, fulfilling the promise made in Phase A's
+  `providers/base.py` docstring that this was deferred "until a real
+  provider exists to model it against"), and `get_levels` now actually
+  works instead of raising `NotImplementedError` (only for
+  `GAMMA_FLIP`/`MAJOR_GAMMA` — the rest is still Phase K).
+- New CLI command `pae options snapshot` (extension §104): fetches,
+  normalizes, and prints one GEXBOT snapshot's metrics and their
+  availability status. Same "not exercised by the automated suite,
+  requires real credentials" caveat as `pae data record`/`pae data
+  ingest` — verified manually that it fails at the expected `No GEXBOT
+  API key` boundary rather than a bare traceback.
+- 16 new tests (`tests/test_options_models.py`, `test_options_normalize.py`,
+  `test_options_levels.py`) plus one existing GEXBOT provider test
+  updated from "raises NotImplementedError" to actually verifying
+  `get_levels`' new output.
+
 ## What's not built yet
 
-Everything from Phase I onward. Concretely, per the extension's own §152
-order: options normalization and the options snapshot/level models
-(Phase I, §28-29), futures/options timestamp synchronization (Phase J,
+Everything from Phase J onward. Concretely, per the extension's own §152
+order: futures/options timestamp synchronization (Phase J,
 §35-36), the options feature engine including GEX regime classification
 and the explicit No-Assumption Principle (Phase K, §29-34/§37/§67-70), the
 cross-market `MarketState_t` vector (Phase L, §43-44), the Data Center
