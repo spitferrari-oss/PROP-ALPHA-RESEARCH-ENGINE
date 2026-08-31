@@ -139,6 +139,9 @@ src/prop_alpha/
 │   ├── config.py                #   DataCenterConfig: GEXBOT-health thresholds
 │   ├── status.py                 #   DataCenterStatus + assemble_data_center_status (pure aggregator)
 │   └── render.py                  #   render_status_markdown
+├── replay/                     # Data Feed extension: deterministic historical replay engine (spec §56-58)
+│   ├── reader.py                #   read_jsonl_envelopes (recorded sessions) / dataframe_to_envelopes (ingested bars)
+│   └── engine.py                 #   replay_envelopes: deterministic (timestamp, position) ordered dispatch
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics

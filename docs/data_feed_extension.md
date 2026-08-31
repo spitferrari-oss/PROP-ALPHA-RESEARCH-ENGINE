@@ -611,12 +611,57 @@ data, market state, signals, and paper/shadow simulation.
   content including the not-available fallback, failed-checks listing,
   and issues listing.
 
+**Phase N — Deterministic Historical Replay Engine (extension §152 Phase N, §56-58)**
+- `replay/reader.py`: two sources converging on the same
+  `data.live.recorder.LiveMessageEnvelope` shape used by the Live Data
+  Engine (Phase C). `read_jsonl_envelopes` is the exact inverse of
+  `data.live.recorder._jsonl_sink` — replays a recorded live session
+  (`pae data record`, Phase F) back as envelopes. `dataframe_to_envelopes`
+  wraps an already-ingested historical bar frame (e.g. `data.lake_query.
+  query_tier`'s output, Phase G) as envelopes instead, so a handler
+  written once against the live envelope/`EventRouter` shape works
+  unmodified against real historical bars too — no second, historical-only
+  code path. There is no real "received at" moment for a historical bar,
+  so `timestamp_exchange`/`timestamp_received`/`timestamp_normalized` are
+  all honestly set to the bar's own timestamp (not a fabricated arrival
+  time) and `latency_ms` stays `None` (nothing to measure it against);
+  `sequence` is the row's position, giving replay a deterministic
+  tie-break for same-timestamp rows. Naive timestamps raise, per extension
+  §16-17.
+- `replay/engine.py`: `replay_envelopes` is the actual replay driver.
+  Determinism is its job, not the caller's — it sorts by
+  `(timestamp_normalized, original position)` regardless of input order,
+  so the same envelope collection replays identically no matter what
+  order it arrived in (the whole point of "deterministic" replay, not
+  just playback). `speed=None`/`<=0` (the default) dispatches every
+  envelope immediately with no pacing — the right mode for backtesting/
+  shadow-mode research where only event *order* matters; `speed=1.0`
+  reproduces the original wall-clock cadence between consecutive
+  envelopes, `speed=2.0` plays it back twice as fast, and so on. A
+  negative inter-event gap (out-of-order source data) is clamped to zero
+  rather than raising — replay plays back what's there; validating it is
+  `data.quality_engine`'s job on the way in, not this module's.
+- `pae replay run [--tier raw] [--speed 0]`: replays an ingested lake
+  partition through `dataframe_to_envelopes` + `replay_envelopes`,
+  dispatched via a real `data.live.event_router.EventRouter` bound to a
+  print handler. Needs a real ingested lake partition (`pae data
+  ingest`), so it isn't exercised by the test suite itself; the
+  reader/engine logic it calls into is (smoke-tested manually against a
+  `write_dataset`-written partition during development).
+- 20 new tests (`tests/test_replay_{reader,engine}.py`): JSONL round-trip
+  through a real `LiveRecorder`, file-order preservation, blank-line
+  skipping, DataFrame-to-envelope conversion including the missing-column
+  and naive-timestamp error cases and the empty-frame case,
+  order-independent deterministic dispatch, position tie-break for
+  identical timestamps, every `speed` pacing case (`None`/`0`/`1.0`/`2.0`,
+  first-envelope-never-sleeps, negative-gap-clamped), and `ReplayResult`'s
+  event count/timestamp bounds for both populated and empty input.
+
 ## What's not built yet
 
-Everything from Phase N onward. Concretely, per the extension's own §152
-order: the deterministic historical replay engine (Phase N, §56-58), data-extension
-live shadow mode with trade
-proposals and human feedback capture (Phase O, §59/§75-80), auto-generated
+Everything from Phase O onward. Concretely, per the extension's own §152
+order: data-extension live shadow mode with trade proposals and human
+feedback capture (Phase O, §59/§75-80), auto-generated
 GEX/futures research experiment templates (Phase P, §111-114), and the
 mock-provider/CI integration-test suite required to run all of the above
 without real API keys or network access (§134-140). Also within Phase B's

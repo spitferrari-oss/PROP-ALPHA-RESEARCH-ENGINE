@@ -64,11 +64,13 @@ strategy_app = typer.Typer(help="Strategy backtest/discovery commands")
 research_app = typer.Typer(help="End-to-end research commands")
 options_app = typer.Typer(help="Options intelligence commands (Data Feed extension)")
 data_center_app = typer.Typer(help="Data Center dashboard commands (Data Feed extension)")
+replay_app = typer.Typer(help="Historical replay commands (Data Feed extension)")
 app.add_typer(data_app, name="data")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(research_app, name="research")
 app.add_typer(options_app, name="options")
 app.add_typer(data_center_app, name="data-center")
+app.add_typer(replay_app, name="replay")
 
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
@@ -293,6 +295,46 @@ def data_center_status(
 
     status = assemble_data_center_status(options_feed=options_feed)
     typer.echo(render_status_markdown(status))
+
+
+@replay_app.command("run")
+def replay_run(
+    provider: str = typer.Option(..., help="Provider partition to replay (e.g. databento)"),
+    instrument: str = typer.Option(..., help="Instrument partition to replay (e.g. ES)"),
+    schema: str = typer.Option(..., help="Schema partition to replay (e.g. ohlcv-1m)"),
+    tier: str = typer.Option("raw", help="Data lake tier to replay from (extension §6)"),
+    lake_root: str = typer.Option("data/lake", help="Data lake root"),
+    speed: float = typer.Option(0.0, help="0 = as fast as possible; 1.0 = real-time; 2.0 = 2x real-time; ..."),
+) -> None:
+    """Data Feed extension (§56-58, Phase N): deterministically replay an
+    already-ingested historical lake partition through the same
+    `LiveMessageEnvelope`/`EventRouter` shape a live subscription would
+    use (`replay.reader.dataframe_to_envelopes` + `replay.engine.
+    replay_envelopes`), printing each event as it's dispatched. This CLI
+    command needs a real ingested lake partition (`pae data ingest`) to
+    run against, so it isn't exercised by the test suite itself — the
+    reader/engine logic it calls into is
+    (`tests/test_replay_{reader,engine}.py`).
+    """
+    from prop_alpha.data.lake import DataLakePaths
+    from prop_alpha.data.lake_query import query_tier
+    from prop_alpha.data.live.event_router import EventRouter
+    from prop_alpha.replay.engine import replay_envelopes
+    from prop_alpha.replay.reader import dataframe_to_envelopes
+
+    lake = DataLakePaths(root=Path(lake_root))
+    df = query_tier(lake, tier, provider=provider, instrument=instrument, schema=schema)
+    envelopes = dataframe_to_envelopes(df, provider=provider, instrument=instrument, schema=schema)
+
+    router = EventRouter()
+    router.subscribe(lambda e: typer.echo(f"{e.timestamp_normalized.isoformat()}  {e.payload}"))
+
+    result = replay_envelopes(envelopes, on_envelope=router.route, speed=(speed or None))
+    typer.echo(
+        f"Replay complete: {result.n_events} events, "
+        f"{result.start_timestamp} -> {result.end_timestamp}, "
+        f"{result.wall_clock_seconds:.3f}s wall-clock."
+    )
 
 
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:
