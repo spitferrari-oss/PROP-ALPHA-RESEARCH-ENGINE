@@ -16,6 +16,10 @@ data/lake/*
 !data/lake/.gitkeep
 reports/*
 !reports/.gitkeep
+# Hardening-pass audit deliverables are committed documentation, not
+# ephemeral generated research output like reports/EXP-*.md.
+!reports/hardening_baseline.md
+!reports/hardening_report.md
 artifacts/*
 !artifacts/.gitkeep
 experiments/*
