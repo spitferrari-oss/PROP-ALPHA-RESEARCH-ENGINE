@@ -664,6 +664,117 @@ def live_shadow_decide(
     typer.echo(f"Recorded {decision} for proposal {proposal_id} by {reviewer}.")
 
 
+@live_shadow_app.command("start")
+def live_shadow_start(
+    instrument: str = typer.Option("NQ", help="Instrument to subscribe to"),
+    provider: str = typer.Option(
+        "mock", help="Futures provider: 'mock' (MockFuturesDataProvider, always available) or 'databento' "
+                     "(real provider — requires DATABENTO_API_KEY and the databento package)",
+    ),
+    mode: str = typer.Option(
+        "LIVE_SHADOW",
+        help="REPLAY_SHADOW / LIVE_SHADOW / PAPER / LIVE_HUMAN_APPROVAL / LIVE_AUTO. LIVE_AUTO is representable "
+             "as a label but nothing in this repository ever executes a real order regardless of mode — see "
+             "execution.gateway.",
+    ),
+    status_path: str = typer.Option(
+        "research_memory/live_shadow/session_status.json", help="Where to persist session status",
+    ),
+    ledger_path: str = typer.Option("research_memory/live_shadow/proposals.jsonl", help="Live shadow ledger path"),
+) -> None:
+    """Hardening pass (Step 36-39, Blocker C): runs the real PROVIDER ->
+    NORMALIZATION -> FEATURES -> REGIME -> ALPHA -> NO-TRADE -> RISK ->
+    PAPER/SHADOW PROPOSAL pipeline (`live_shadow.session.
+    run_live_shadow_session`) against a subscribed futures provider.
+
+    This environment has no background-daemon/process-supervisor
+    infrastructure, so this command runs synchronously to completion (the
+    mock provider delivers a short deterministic burst of bars and
+    finishes; a real provider's `subscribe_live` would run until its
+    caller stops it) rather than actually daemonizing — `pae live-shadow
+    status`/`stop` read/update the status file this command writes,
+    honestly, rather than pretending to signal a background process.
+
+    No alpha/proposal generator is wired into this command by default —
+    every bar is evaluated against the no-trade gate with no supplied
+    expected value, so `NO_EDGE` blocks every proposal and nothing is
+    logged. That is the safe, honest default: this command exists to
+    prove the pipeline wiring itself works end to end, not to propose
+    real trades without an explicit alpha behind them.
+    """
+    from prop_alpha.live_shadow.ledger import LiveShadowLedger
+    from prop_alpha.live_shadow.session import LiveShadowMode, run_live_shadow_session
+    from prop_alpha.providers.base import DataLevel
+    from prop_alpha.providers.mocks import MockFuturesDataProvider
+
+    if provider == "mock":
+        futures_provider = MockFuturesDataProvider()
+        data_source = "MOCK"
+    elif provider == "databento":
+        from prop_alpha.providers.databento import DatabentoProvider
+
+        futures_provider = DatabentoProvider()
+        data_source = "REAL"
+    else:
+        typer.echo(f"Unknown provider {provider!r}. Use 'mock' or 'databento'.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        shadow_mode = LiveShadowMode(mode)
+    except ValueError:
+        typer.echo(f"Unknown mode {mode!r}. Use one of {[m.value for m in LiveShadowMode]}.", err=True)
+        raise typer.Exit(code=1)
+
+    status = run_live_shadow_session(
+        futures_provider, instrument=instrument, level=DataLevel.L1, mode=shadow_mode, data_source=data_source,
+        ledger=LiveShadowLedger(path=ledger_path), status_path=status_path,
+    )
+    typer.echo(f"state={status.state}  data_source={status.data_source}  "
+               f"n_events={status.n_events}  n_proposals={status.n_proposals}")
+    if status.message:
+        typer.echo(status.message)
+
+
+@live_shadow_app.command("status")
+def live_shadow_status(
+    status_path: str = typer.Option(
+        "research_memory/live_shadow/session_status.json", help="Where session status is persisted",
+    ),
+) -> None:
+    """Reads the on-disk session status `pae live-shadow start` wrote."""
+    from prop_alpha.live_shadow.session import get_live_shadow_status
+
+    status = get_live_shadow_status(status_path)
+    typer.echo("LIVE SHADOW SESSION STATUS")
+    typer.echo("")
+    typer.echo(f"mode:          {status.mode}")
+    typer.echo(f"state:         {status.state}")
+    typer.echo(f"data_source:   {status.data_source}")
+    typer.echo(f"provider:      {status.provider_name}")
+    typer.echo(f"started_at:    {status.started_at}")
+    typer.echo(f"last_event_at: {status.last_event_at}")
+    typer.echo(f"n_events:      {status.n_events}")
+    typer.echo(f"n_proposals:   {status.n_proposals}")
+    if status.message:
+        typer.echo(f"message:       {status.message}")
+
+
+@live_shadow_app.command("stop")
+def live_shadow_stop(
+    status_path: str = typer.Option(
+        "research_memory/live_shadow/session_status.json", help="Where session status is persisted",
+    ),
+) -> None:
+    """Marks the on-disk session status STOPPED (see `live_shadow.session.
+    stop_live_shadow_session`'s docstring for why this is a status-file
+    update, not a real process signal, in this environment).
+    """
+    from prop_alpha.live_shadow.session import stop_live_shadow_session
+
+    status = stop_live_shadow_session(status_path)
+    typer.echo(f"state={status.state}  {status.message}")
+
+
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:
     """Backtest one strategy and run its statistical validation gates (spec
     §60 Research Gates): OOS split, bootstrap, Monte Carlo/prop simulation,
