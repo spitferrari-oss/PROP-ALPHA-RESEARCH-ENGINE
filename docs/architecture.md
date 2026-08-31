@@ -132,6 +132,9 @@ src/prop_alpha/
 │   ├── conditional_ev.py      #   EV(alpha|GEXState) (spec §69)
 │   └── incremental_value.py   #   Options Incremental Alpha Score (spec §70)
 ├── sync/                     # Data Feed extension: futures/options synchronization + CrossMarketState (spec §35-36)
+├── market_state/              # Data Feed extension: Location Engine + Market State vector (spec §43-44)
+│   ├── location.py            #   MarketLocation: distance to every futures/options level
+│   └── vector.py               #   MarketState: 10-component vector, attach_market_state onto CrossMarketState
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics

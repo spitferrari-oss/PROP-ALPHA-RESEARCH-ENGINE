@@ -516,12 +516,60 @@ data, market state, signals, and paper/shadow simulation.
   penalty still marginal" and "improvements everywhere but negative EV
   still non-essential" cases.
 
+**Phase L — Cross-market Market State Vector (extension §152 Phase L, §43-44)**
+- `market_state/location.py`: the Location Engine (§43). `build_market_location`
+  computes, for a given price/timestamp, the distance to every relevant
+  futures-side coordinate present on the futures bar (VWAP, volume-profile
+  POC/VAH/VAL, prior-day volume-profile POC/VAH/VAL, prior-day high/low,
+  opening-range high/low) plus every options level passed in (typically
+  `options.levels.extract_levels`'s output for the synced snapshot). Reuses
+  `options.distance.compute_distance_features` (Phase K) for both sides —
+  that function only needs a price and a level value, so despite living in
+  the `options` package it's the correct shared primitive rather than a
+  duplicated formula. A level whose futures-bar column is missing or
+  `None`/`NaN` is simply absent from `MarketLocation.distances`, never a
+  fabricated distance. `MarketLocation.as_dict()` prefers ATR-normalized
+  distance, falling back to percentage distance when no ATR was supplied.
+- `market_state/vector.py`: the Market State vector itself (§44).
+  `build_market_state` assembles the 10-component `MarketState` dataclass —
+  price/volume/volatility/liquidity/orderflow/profile/session/regime/
+  options/event state — by extracting known column names from a
+  `futures_bar` dict (a column that isn't present, or is `None`/`NaN`, is
+  simply omitted from that component); folding a `MarketLocation`'s
+  futures-category distances into `profile_state` and options-category
+  distances into `options_state`; flattening an `OptionsSnapshot`'s 12
+  metrics (value when available, plus an always-present `_status` key) into
+  `options_state`; and passing `event_state` through as-is, defaulting to
+  `{}` — no Event Engine exists anywhere in this codebase yet, an honest,
+  documented gap rather than an invented one. `build_market_state_from_cross_market`
+  is a convenience wrapper pulling `.futures`/`.options`/`.timestamp` off a
+  Phase J `CrossMarketState`; `attach_market_state` returns a *new*
+  `CrossMarketState` (via `dataclasses.replace`, since it's frozen) with
+  `.market_state` populated from `MarketState.as_flat_dict()`
+  (`"{component}.{key}"` namespaced). This is deliberately one-directional:
+  `market_state` imports `sync`, `sync` never imports `market_state` — so
+  `CrossMarketState.market_state` (added in Phase J) stays `None` until a
+  caller explicitly calls `attach_market_state`; nothing upstream fabricates
+  a state vector on its own. `MarketState.completeness` is a coarse,
+  honestly-labeled "fraction of the 10 components with at least one value"
+  signal, not a data-quality claim.
+- 19 new tests (`tests/test_market_state_{location,vector}.py`): present vs.
+  missing/NaN futures columns, options levels included/skipped by value,
+  ATR-normalized vs. percentage-fallback distance, `as_dict()`/`get()`
+  behavior, per-component extraction from a futures bar including the
+  unrelated-column-is-ignored case, NaN exclusion, options-snapshot
+  flattening (available value + status, unavailable metric has no value key
+  but keeps its status key), location-distance category splitting into
+  `profile_state` vs. `options_state`, `completeness`, `as_flat_dict()`
+  namespacing, and `attach_market_state` producing a new instance without
+  mutating the original `CrossMarketState`.
+
 ## What's not built yet
 
-Everything from Phase L onward. Concretely, per the extension's own §152
-order: the cross-market `MarketState_t` vector (Phase L, §43-44), the Data Center
-dashboard (Phase M, §21/§54/§105-109), the deterministic historical replay
-engine (Phase N, §56-58), data-extension live shadow mode with trade
+Everything from Phase M onward. Concretely, per the extension's own §152
+order: the Data Center dashboard (Phase M, §21/§54/§105-109), the
+deterministic historical replay engine (Phase N, §56-58), data-extension
+live shadow mode with trade
 proposals and human feedback capture (Phase O, §59/§75-80), auto-generated
 GEX/futures research experiment templates (Phase P, §111-114), and the
 mock-provider/CI integration-test suite required to run all of the above
@@ -536,7 +584,7 @@ command itself isn't wired up), deriving fixed-
 frequency `snapshots`-tier bars from raw tick data at
 `RecordingConfig.futures_snapshot_frequency` (the recorder today writes
 every native message as-is, not resampled — a real design decision left
-to Phase G/L once the data lake's `snapshots` tier is actually wired up),
+to a future pass once the data lake's `snapshots` tier is actually wired up),
 and `pae data ingest`'s incremental-download/resume/retry semantics for
 *historical* backfill (Phase G) as distinct from this phase's *live*
 recording.
