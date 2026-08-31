@@ -1,5 +1,7 @@
 import datetime as dt
 
+import pytest
+
 from prop_alpha.data.live.connection_manager import ConnectionState
 from prop_alpha.data.live.health import FeedHealth
 from prop_alpha.data.quality_engine import CheckResult, DataQualityReport
@@ -126,3 +128,33 @@ def test_worst_status_wins_across_multiple_inputs():
 def test_timestamp_defaults_to_now_when_omitted():
     status = assemble_data_center_status()
     assert status.timestamp.tzinfo is not None
+
+
+# --- hardening pass: data_source labeling (Step 34-35) ---
+
+def test_data_source_defaults_to_not_connected():
+    status = assemble_data_center_status(timestamp=_NOW)
+    assert status.data_source == "NOT_CONNECTED"
+
+
+def test_data_source_real_adds_no_issue():
+    status = assemble_data_center_status(timestamp=_NOW, data_source="REAL")
+    assert status.data_source == "REAL"
+    assert status.issues == ()
+
+
+def test_data_source_mock_adds_a_visible_issue():
+    status = assemble_data_center_status(timestamp=_NOW, data_source="MOCK")
+    assert status.data_source == "MOCK"
+    assert any("data_source=MOCK" in issue for issue in status.issues)
+
+
+def test_data_source_synthetic_and_replay_also_flagged():
+    for source in ("SYNTHETIC", "REPLAY"):
+        status = assemble_data_center_status(timestamp=_NOW, data_source=source)
+        assert any(f"data_source={source}" in issue for issue in status.issues)
+
+
+def test_data_source_invalid_value_raises():
+    with pytest.raises(ValueError, match="data_source"):
+        assemble_data_center_status(timestamp=_NOW, data_source="FAKE_NEWS")

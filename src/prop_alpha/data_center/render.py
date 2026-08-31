@@ -22,6 +22,7 @@ def render_status_markdown(status: DataCenterStatus) -> str:
     lines.append("")
     lines.append(f"- Timestamp: {status.timestamp.isoformat()}")
     lines.append(f"- Overall status: **{status.overall_status}**")
+    lines.append(f"- Data source: **{status.data_source}**")
     lines.append("")
 
     lines.append("## Futures Feed")

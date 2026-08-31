@@ -23,6 +23,11 @@ from prop_alpha.sync.config import SyncConfig
 
 _STATUS_ORDER = ("UNKNOWN", "OK", "DEGRADED", "CRITICAL")
 
+# Hardening pass (Step 34-35): the Data Center must say, in plain text,
+# what kind of data it's actually showing — never let a mock/synthetic/
+# replayed result render indistinguishably from a real live connection.
+DATA_SOURCES = ("REAL", "REPLAY", "SYNTHETIC", "MOCK", "NOT_CONNECTED")
+
 
 def _worse(current: str, candidate: str) -> str:
     return candidate if _STATUS_ORDER.index(candidate) > _STATUS_ORDER.index(current) else current
@@ -38,6 +43,7 @@ class DataCenterStatus:
     sync_time_difference_ms: float | None = None
     overall_status: str = "UNKNOWN"
     issues: tuple[str, ...] = field(default_factory=tuple)
+    data_source: str = "NOT_CONNECTED"
 
 
 def assemble_data_center_status(
@@ -50,7 +56,11 @@ def assemble_data_center_status(
     quality_config: DataQualityConfig | None = None,
     sync_config: SyncConfig | None = None,
     data_center_config: DataCenterConfig | None = None,
+    data_source: str = "NOT_CONNECTED",
 ) -> DataCenterStatus:
+    if data_source not in DATA_SOURCES:
+        raise ValueError(f"data_source must be one of {DATA_SOURCES}, got {data_source!r}")
+
     timestamp = timestamp or dt.datetime.now(dt.timezone.utc)
     quality_config = quality_config or DataQualityConfig()
     sync_config = sync_config or SyncConfig()
@@ -58,6 +68,8 @@ def assemble_data_center_status(
 
     status = "UNKNOWN"
     issues: list[str] = []
+    if data_source in ("MOCK", "SYNTHETIC", "REPLAY"):
+        issues.append(f"data_source={data_source} — this status reflects {data_source.lower()} data, not a real live feed")
 
     if futures_feed is not None:
         status = _worse(status, "OK")
@@ -136,4 +148,5 @@ def assemble_data_center_status(
         sync_time_difference_ms=sync_time_difference_ms,
         overall_status=status,
         issues=tuple(issues),
+        data_source=data_source,
     )

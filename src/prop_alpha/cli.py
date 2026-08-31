@@ -551,13 +551,15 @@ def data_center_status(
     from prop_alpha.options.gexbot.parser import parse_snapshot
 
     options_feed = None
+    data_source = "NOT_CONNECTED"
     if underlying:
         client = GexbotClient()
         raw = client.get_gex(underlying)
         gex_snapshot = parse_snapshot(raw, underlying)
         options_feed = compute_health(gex_snapshot, connected=True, authenticated=True, n_polls=1, n_errors=0)
+        data_source = "REAL"  # a real GEXBOT HTTP call just succeeded — never label this MOCK/SYNTHETIC
 
-    status = assemble_data_center_status(options_feed=options_feed)
+    status = assemble_data_center_status(options_feed=options_feed, data_source=data_source)
     typer.echo(render_status_markdown(status))
 
 
