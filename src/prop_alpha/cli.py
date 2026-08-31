@@ -63,10 +63,12 @@ data_app = typer.Typer(help="Data pipeline commands")
 strategy_app = typer.Typer(help="Strategy backtest/discovery commands")
 research_app = typer.Typer(help="End-to-end research commands")
 options_app = typer.Typer(help="Options intelligence commands (Data Feed extension)")
+data_center_app = typer.Typer(help="Data Center dashboard commands (Data Feed extension)")
 app.add_typer(data_app, name="data")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(research_app, name="research")
 app.add_typer(options_app, name="options")
+app.add_typer(data_center_app, name="data-center")
 
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
@@ -249,6 +251,48 @@ def options_snapshot(
         status = metric["availability"]["status"]
         value = f"{metric['value']:.4g}" if metric["value"] is not None else "n/a"
         typer.echo(f"  {name:<22} {value:>14}   [{status}]")
+
+
+@data_center_app.command("status")
+def data_center_status(
+    underlying: str = typer.Option(
+        None, help="Underlying ticker for the options feed status (e.g. SPX). Omit to skip the options feed section.",
+    ),
+) -> None:
+    """Data Feed extension (§105-109, Phase M): assemble and print the
+    cross-market Data Center status (extension §21/§54's `FeedHealth`/
+    `DataQualityReport` combined with GEXBOT health, per
+    `data_center.status`'s aggregation).
+
+    This one-shot CLI invocation can only report what it can compute
+    synchronously right here: the futures feed section needs an
+    already-running `ConnectionManager`/`MessageBuffer` pair from an
+    active `pae data record` session (a separate long-lived process this
+    command doesn't have access to), and the data quality section needs
+    an already-computed `DataQualityReport` (e.g. from `pae data
+    ingest`), so both print "not available" rather than a fabricated
+    status. Only the options feed — a single synchronous GEXBOT poll — is
+    actually populated here. Requires `GEXBOT_API_KEY` and the `requests`
+    package when `--underlying` is given; not exercised by the test suite
+    for that reason (the aggregation/rendering it calls into is, via
+    injected `FeedHealth`/`GexbotHealth`/`DataQualityReport` fixtures in
+    `tests/test_data_center_{status,render}.py`).
+    """
+    from prop_alpha.data_center.render import render_status_markdown
+    from prop_alpha.data_center.status import assemble_data_center_status
+    from prop_alpha.options.gexbot.client import GexbotClient
+    from prop_alpha.options.gexbot.health import compute_health
+    from prop_alpha.options.gexbot.parser import parse_snapshot
+
+    options_feed = None
+    if underlying:
+        client = GexbotClient()
+        raw = client.get_gex(underlying)
+        gex_snapshot = parse_snapshot(raw, underlying)
+        options_feed = compute_health(gex_snapshot, connected=True, authenticated=True, n_polls=1, n_errors=0)
+
+    status = assemble_data_center_status(options_feed=options_feed)
+    typer.echo(render_status_markdown(status))
 
 
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:

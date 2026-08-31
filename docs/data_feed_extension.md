@@ -564,11 +564,57 @@ data, market state, signals, and paper/shadow simulation.
   namespacing, and `attach_market_state` producing a new instance without
   mutating the original `CrossMarketState`.
 
+**Phase M — Data Center Dashboard (extension §152 Phase M, §21/§54/§105-109)**
+- `data_center/config.py`: `DataCenterConfig` — the two GEXBOT-health
+  thresholds (`options_error_rate_warning`, `options_data_age_warning_
+  seconds`) nothing else in the codebase already owns; futures staleness
+  reuses `data.quality_config.StaleThresholds.futures_seconds` and sync
+  tolerance reuses `sync.config.SyncConfig.max_time_difference_ms` rather
+  than duplicating either.
+- `data_center/status.py`: `DataCenterStatus` + `assemble_data_center_status`
+  — a pure aggregator combining whatever health/status objects a caller
+  already has: `data.live.health.FeedHealth` (§19-21, futures feed),
+  `options.gexbot.health.GexbotHealth` (§90, options feed),
+  `data.quality_engine.DataQualityReport` (§19-20/§54), `market_state.
+  vector.MarketState.completeness` (§44), and a sync time-difference in
+  ms (§35-36). Every input is independently optional; an input that
+  wasn't supplied contributes no severity to `overall_status` at all —
+  never assumed healthy, never assumed broken. `overall_status` is the
+  worst of `UNKNOWN`/`OK`/`DEGRADED`/`CRITICAL` found across whatever was
+  actually supplied: a disconnected/failed futures feed, an unauthenticated
+  options feed, or a `CRITICAL`-severity quality report each force
+  `CRITICAL`; reconnecting/stale connection states, elevated sequence
+  gaps or message age, elevated options error rate/data age/no available
+  metrics, `WARNING`-severity quality, or a sync gap beyond
+  `SyncConfig.max_time_difference_ms` each force `DEGRADED`. Each
+  contributing condition is recorded verbatim in `issues` so the rendered
+  report never just says "something's wrong" without saying what.
+- `data_center/render.py`: `render_status_markdown` renders a
+  `DataCenterStatus` as plain markdown — the same convention `reporting/`
+  already uses for the core engine's reports, not a separate web
+  dashboard dependency (no web framework is in `pyproject.toml`, and none
+  was added for this). A component that is `None` prints "not available"
+  rather than fabricating a section.
+- `pae data-center status [--underlying TICKER]`: assembles and prints the
+  status. Honest about what a single CLI invocation can actually compute:
+  the futures feed and data quality sections always print "not
+  available" here, since they need state from a separate long-running
+  process (`pae data record`'s `ConnectionManager`/`MessageBuffer`, or a
+  `DataQualityReport` already produced by `pae data ingest`) that this
+  one-shot command doesn't have access to — only the options feed (a
+  single synchronous GEXBOT poll) is actually populated. Requires
+  `GEXBOT_API_KEY`/`requests` when `--underlying` is given.
+- 23 new tests (`tests/test_data_center_{status,render}.py`): every
+  severity-triggering condition on both feeds and on quality individually
+  and combined (worst-status-wins), sync gap within/beyond tolerance, the
+  all-`None`/`UNKNOWN` case, and the markdown renderer's per-section
+  content including the not-available fallback, failed-checks listing,
+  and issues listing.
+
 ## What's not built yet
 
-Everything from Phase M onward. Concretely, per the extension's own §152
-order: the Data Center dashboard (Phase M, §21/§54/§105-109), the
-deterministic historical replay engine (Phase N, §56-58), data-extension
+Everything from Phase N onward. Concretely, per the extension's own §152
+order: the deterministic historical replay engine (Phase N, §56-58), data-extension
 live shadow mode with trade
 proposals and human feedback capture (Phase O, §59/§75-80), auto-generated
 GEX/futures research experiment templates (Phase P, §111-114), and the

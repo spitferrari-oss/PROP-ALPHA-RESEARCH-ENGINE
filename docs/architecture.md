@@ -135,6 +135,10 @@ src/prop_alpha/
 ├── market_state/              # Data Feed extension: Location Engine + Market State vector (spec §43-44)
 │   ├── location.py            #   MarketLocation: distance to every futures/options level
 │   └── vector.py               #   MarketState: 10-component vector, attach_market_state onto CrossMarketState
+├── data_center/                # Data Feed extension: Data Center dashboard (spec §21/§54/§105-109)
+│   ├── config.py                #   DataCenterConfig: GEXBOT-health thresholds
+│   ├── status.py                 #   DataCenterStatus + assemble_data_center_status (pure aggregator)
+│   └── render.py                  #   render_status_markdown
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
