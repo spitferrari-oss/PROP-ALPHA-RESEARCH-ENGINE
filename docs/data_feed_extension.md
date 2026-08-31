@@ -442,11 +442,39 @@ data, market state, signals, and paper/shadow simulation.
   updated from "raises NotImplementedError" to actually verifying
   `get_levels`' new output.
 
+**Phase J — Futures/Options Synchronization (extension §152 Phase J, §35-36)**
+- `sync/config.py`: `SyncConfig.max_time_difference_ms` — extension §35's
+  own worked example (500ms) as the default, not a hardcoded assumption.
+- `sync/cross_market.py`: `find_nearest_snapshot` does the actual
+  nearest-neighbor timestamp matching a single futures moment needs,
+  returning `(None, None)` — not the nearest snapshot regardless of
+  distance — when nothing falls inside the tolerance (§35 says associate
+  *within a window*, not unconditionally). `synchronize_snapshot` wraps
+  it into `CrossMarketState` (§36's object) for the online/live shape —
+  one futures bar paired with the freshest options context (Phase O's
+  eventual shadow mode). `synchronize_frame` is the historical/research
+  shape Phase K's conditional-EV-by-options-state work needs: a vectorized
+  `pandas.merge_asof` nearest-as-of join of a whole futures bar frame
+  against a list of options snapshots, adding `options_*` columns plus a
+  `sync_time_difference_ms` column so how well-aligned each match actually
+  was is never hidden; a futures row with nothing in tolerance gets `NaN`
+  in the `options_*` columns, never a fabricated pairing.
+- `CrossMarketState.regime` is passed straight through from whatever the
+  futures bar's own already-computed `regime_rule` column says (the core
+  Regime Engine, Phases 1-10) — not re-derived here. `market_state` (the
+  full `MarketState_t` vector) stays `None`; that's Phase L's job.
+- Both timestamp inputs are required to be timezone-aware UTC (extension
+  §16/§17) — a naive datetime raises rather than being silently assumed
+  UTC.
+- 11 new tests (`tests/test_sync_cross_market.py`): nearest-match
+  selection, the outside-tolerance/empty-list/naive-timestamp cases for
+  both the single-pairing and frame-level APIs, `regime` pass-through, and
+  the reported time-difference values.
+
 ## What's not built yet
 
-Everything from Phase J onward. Concretely, per the extension's own §152
-order: futures/options timestamp synchronization (Phase J,
-§35-36), the options feature engine including GEX regime classification
+Everything from Phase K onward. Concretely, per the extension's own §152
+order: the options feature engine including GEX regime classification
 and the explicit No-Assumption Principle (Phase K, §29-34/§37/§67-70), the
 cross-market `MarketState_t` vector (Phase L, §43-44), the Data Center
 dashboard (Phase M, §21/§54/§105-109), the deterministic historical replay

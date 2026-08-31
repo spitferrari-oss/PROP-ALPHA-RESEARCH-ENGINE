@@ -127,6 +127,7 @@ src/prop_alpha/
 │   ├── normalize.py          #   GexSnapshot -> OptionsSnapshot (spec §28)
 │   ├── levels.py             #   Options Level Engine: snapshot -> OptionsLevel objects (spec §29)
 │   └── gexbot/                #   GEXBOT-specific client/auth/parser/models/health
+├── sync/                     # Data Feed extension: futures/options synchronization + CrossMarketState (spec §35-36)
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
