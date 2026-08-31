@@ -38,6 +38,13 @@ class CrossMarketState:
     sync_time_difference_ms: float | None
     market_state: dict | None = None
     regime: str | None = None
+    # Hardening pass (Step 29-31): explicit sync/freshness/quality labels
+    # on the pairing itself, distinct from any per-metric availability
+    # already carried on `options` (Phase I's OptionsSnapshot). `None`
+    # values here mean "not evaluated," never a fabricated "healthy."
+    sync_quality: str | None = None       # "SYNCED" | "NO_MATCH" | "STALE"
+    freshness_seconds: float | None = None  # age of `options`, if any, relative to `timestamp`
+    data_quality: float | None = None      # pass-through slot for a caller's own DataQualityReport.score
 
 
 def _as_utc(ts) -> dt.datetime:
@@ -78,18 +85,41 @@ def synchronize_snapshot(
     futures_timestamp,
     options_snapshots: list[OptionsSnapshot],
     config: SyncConfig | None = None,
+    data_quality: float | None = None,
 ) -> CrossMarketState:
     """Pairs one futures bar with the nearest options snapshot — the
     online/live shape (Phase O's shadow mode: "what's the freshest
     options context for the bar that just closed").
+
+    `sync_quality` (hardening pass Step 29-31) is derived, never
+    fabricated: `"NO_MATCH"` when no snapshot fell within `config.
+    max_time_difference_ms` (`options` is `None`), `"STALE"` when a match
+    was found but its age exceeds `config.max_freshness_seconds`,
+    `"SYNCED"` otherwise. `data_quality` is a pass-through slot — this
+    function doesn't compute one itself (that's `data.quality_engine`'s
+    job on the futures side), it only carries whatever score a caller
+    already has alongside the pairing.
     """
+    config = config or SyncConfig()
     options, diff_ms = find_nearest_snapshot(futures_timestamp, options_snapshots, config)
+    freshness_seconds = diff_ms / 1000.0 if diff_ms is not None else None
+
+    if options is None:
+        sync_quality = "NO_MATCH"
+    elif freshness_seconds is not None and freshness_seconds > config.max_freshness_seconds:
+        sync_quality = "STALE"
+    else:
+        sync_quality = "SYNCED"
+
     return CrossMarketState(
         timestamp=_as_utc(futures_timestamp),
         futures=futures_bar,
         options=options,
         sync_time_difference_ms=diff_ms,
         regime=futures_bar.get("regime_rule"),
+        sync_quality=sync_quality,
+        freshness_seconds=freshness_seconds,
+        data_quality=data_quality,
     )
 
 

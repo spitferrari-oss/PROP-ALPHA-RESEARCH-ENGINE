@@ -95,3 +95,43 @@ def test_synchronize_frame_no_snapshots_returns_all_nan_options_columns():
 def test_synchronize_frame_reports_time_difference_in_ms():
     result = synchronize_frame(_futures_df([_ts(0.0)]), [_snapshot(_ts(0.25))], SyncConfig(max_time_difference_ms=1000))
     assert result.loc[0, "sync_time_difference_ms"] == pytest.approx(250.0)
+
+
+# --- hardening pass: sync_quality / freshness_seconds / data_quality (Step 29-31) ---
+
+def test_synchronize_snapshot_no_match_reports_sync_quality_no_match():
+    state = synchronize_snapshot({}, _ts(0.0), [], SyncConfig(max_time_difference_ms=500))
+    assert state.sync_quality == "NO_MATCH"
+    assert state.freshness_seconds is None
+    assert state.options is None
+
+
+def test_synchronize_snapshot_fresh_match_reports_synced():
+    state = synchronize_snapshot(
+        {}, _ts(0.0), [_snapshot(_ts(0.1))],
+        SyncConfig(max_time_difference_ms=500, max_freshness_seconds=60.0),
+    )
+    assert state.sync_quality == "SYNCED"
+    assert state.freshness_seconds == pytest.approx(0.1)
+
+
+def test_synchronize_snapshot_matched_but_old_reports_stale():
+    # within max_time_difference_ms (so it's still the "nearest match")
+    # but beyond max_freshness_seconds -- a real scenario when the sync
+    # tolerance is loose but the caller wants a tighter freshness bar.
+    state = synchronize_snapshot(
+        {}, _ts(0.0), [_snapshot(_ts(90.0))],
+        SyncConfig(max_time_difference_ms=120_000, max_freshness_seconds=60.0),
+    )
+    assert state.sync_quality == "STALE"
+    assert state.freshness_seconds == pytest.approx(90.0)
+
+
+def test_synchronize_snapshot_data_quality_is_passthrough_not_computed():
+    state = synchronize_snapshot({}, _ts(0.0), [], data_quality=97.5)
+    assert state.data_quality == 97.5
+
+
+def test_synchronize_snapshot_data_quality_defaults_to_none():
+    state = synchronize_snapshot({}, _ts(0.0), [])
+    assert state.data_quality is None
