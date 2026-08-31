@@ -1,0 +1,7 @@
+constitution_lock:
+  constitution_id: PARE-RESEARCH-CONSTITUTION
+  version: 1.0.0
+  file: research_constitution.yaml
+  hash_algorithm: SHA256
+  sha256: aa8cee8b9bcaeeb6a8e59175c76d624330dcd8e6ab7b58e5ae7802fe7ccbb24b
+  locked_at: "2026-08-31T00:00:00Z"

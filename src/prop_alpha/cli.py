@@ -20,6 +20,11 @@ from prop_alpha.data.quality import validate_ohlcv
 from prop_alpha.data.synthetic import generate_synthetic_ohlcv
 from prop_alpha.discovery.hypothesis import HypothesisLedger
 from prop_alpha.discovery.pipeline import run_discovery
+from prop_alpha.governance.constitution import (
+    ConstitutionError,
+    assert_constitution_valid,
+    get_constitution_status,
+)
 from prop_alpha.features.pipeline import build_full_feature_set
 from prop_alpha.ml.features import build_ml_feature_matrix
 from prop_alpha.ml.meta_alpha import evaluate_meta_alpha
@@ -66,6 +71,8 @@ options_app = typer.Typer(help="Options intelligence commands (Data Feed extensi
 data_center_app = typer.Typer(help="Data Center dashboard commands (Data Feed extension)")
 replay_app = typer.Typer(help="Historical replay commands (Data Feed extension)")
 live_shadow_app = typer.Typer(help="Live shadow mode trade proposal commands (Data Feed extension)")
+constitution_app = typer.Typer(help="Research Constitution governance commands (hardening pass)")
+system_app = typer.Typer(help="Environment/dependency diagnostics (hardening pass)")
 app.add_typer(data_app, name="data")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(research_app, name="research")
@@ -73,6 +80,91 @@ app.add_typer(options_app, name="options")
 app.add_typer(data_center_app, name="data-center")
 app.add_typer(replay_app, name="replay")
 app.add_typer(live_shadow_app, name="live-shadow")
+app.add_typer(constitution_app, name="constitution")
+app.add_typer(system_app, name="system")
+
+
+def _require_valid_constitution(command_name: str) -> None:
+    """The Constitution pre-check every governance-gated command calls
+    before doing meaningful work (hardening pass Step 4, "Constitution
+    pre-check"). Deliberately does not catch `ConstitutionError` — Typer
+    turns an uncaught exception into a non-zero exit with the error
+    message printed, which is exactly "DO NOT CONTINUE," not a silent
+    degraded-mode continuation.
+
+    Note on command coverage: the hardening spec names `pae strategy
+    backtest`/`validate`/`discover`, `pae portfolio optimize`, and `pae
+    prop simulate` as the commands to gate. None of those exist as
+    separate CLI commands in this repository — backtesting, discovery,
+    and prop simulation all happen inline inside `pae research full-run`/
+    `pae research discover`/`pae research gex-templates`, and no
+    standalone `portfolio`/`prop simulate` command was ever built. This
+    gate is wired into the three commands that actually perform that
+    work instead of adding hollow stub commands just to match names that
+    don't correspond to real functionality here (see `reports/
+    hardening_report.md`).
+    """
+    try:
+        assert_constitution_valid()
+    except ConstitutionError as exc:
+        typer.echo(f"STATUS: CONSTITUTION INVALID\nRESEARCH EXECUTION BLOCKED\n\n{exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@constitution_app.command("show")
+def constitution_show() -> None:
+    """Print the Research Constitution's raw content (hardening pass)."""
+    from prop_alpha.governance.constitution import DEFAULT_CONSTITUTION_PATH
+
+    typer.echo(DEFAULT_CONSTITUTION_PATH.read_text())
+
+
+@constitution_app.command("hash")
+def constitution_hash_cmd() -> None:
+    """Print the Constitution file's current SHA256 (hardening pass)."""
+    from prop_alpha.governance.constitution import calculate_constitution_hash
+
+    typer.echo(calculate_constitution_hash())
+
+
+@constitution_app.command("verify")
+def constitution_verify_cmd() -> None:
+    """Verify the Constitution against its lock file; non-zero exit and
+    'STATUS: CONSTITUTION INVALID' on failure (hardening pass).
+    """
+    status = get_constitution_status()
+    _print_constitution_status(status)
+    if status["status"] != "CONSTITUTION VALID":
+        raise typer.Exit(code=1)
+
+
+@constitution_app.command("status")
+def constitution_status_cmd() -> None:
+    """Same report as `verify`, without the non-zero exit on failure —
+    for scripts that want to inspect status without branching on exit
+    code (hardening pass).
+    """
+    _print_constitution_status(get_constitution_status())
+
+
+def _print_constitution_status(status: dict) -> None:
+    typer.echo("PROP ALPHA ENGINE")
+    typer.echo("CONSTITUTION STATUS")
+    typer.echo("─" * 32)
+    typer.echo("")
+    typer.echo(f"ID:       {status['id']}")
+    typer.echo(f"VERSION:  {status['version']}")
+    typer.echo(f"HASH:     {status['hash']}")
+    typer.echo("")
+    typer.echo(f"Integrity: {status['integrity']}")
+    typer.echo(f"Lockfile:  {status['lockfile']}")
+    typer.echo(f"Version:   {status['version_check']}")
+    typer.echo("")
+    typer.echo(f"STATUS: {status['status']}")
+    if status["status"] != "CONSTITUTION VALID":
+        typer.echo("RESEARCH EXECUTION BLOCKED")
+        for error in status["errors"]:
+            typer.echo(f"  - {error}")
 
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
@@ -552,6 +644,7 @@ def _prepare_dataset(config: EngineConfig, n_days: int) -> dict:
 
 
 def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast: bool = False) -> Path:
+    _constitution_status = get_constitution_status()
     config = EngineConfig.from_yaml(config_path) if config_path else EngineConfig()
     prepared = _prepare_dataset(config, n_days)
     raw_path = prepared["raw_path"]
@@ -688,6 +781,10 @@ def _run_full_research(config_path: str | None, n_days: int, out_dir: str, fast:
             ),
             decision=supervisor_verdict.verdict,
             reasons=supervisor_verdict.blocking_reasons,
+            constitution_id=_constitution_status["id"] or "",
+            constitution_version=_constitution_status["version"] or "",
+            constitution_hash=_constitution_status["hash"] or "",
+            git_commit=git_commit_hash(),
         )
 
     experiment_id = make_experiment_id()
@@ -734,7 +831,11 @@ def research_full_run(
     """Run the full pipeline: data -> features -> backtest -> OOS -> Monte
     Carlo -> prop simulation -> walk-forward -> cost sensitivity -> PBO/DSR
     -> ranking -> report (spec §82, §122).
+
+    Constitution-gated (hardening pass): refuses to run if the Research
+    Constitution fails verification.
     """
+    _require_valid_constitution("research full-run")
     report_path = _run_full_research(config, n_days, out_dir, fast=fast)
     typer.echo(f"Report written to {report_path}")
 
@@ -779,7 +880,11 @@ def research_discover(
     HYPOTHESIS/BACKTESTED here — promote a promising one to
     `cli.ALPHA_STRATEGIES` and run `pae research full-run` for the full
     Phase 4 statistical validation gates before it means anything.
+
+    Constitution-gated (hardening pass): refuses to run if the Research
+    Constitution fails verification.
     """
+    _require_valid_constitution("research discover")
     report_path = _run_discover(config, n_days, out_dir, top_n, ledger_path)
     typer.echo(f"Discovery report written to {report_path}")
 
@@ -813,7 +918,12 @@ def research_gex_templates(
     Not exercised by the test suite for that reason; the condition
     library, template generator, and discovery orchestration it calls
     into are (`tests/test_research_templates_*.py`).
+
+    Constitution-gated (hardening pass): refuses to run if the Research
+    Constitution fails verification.
     """
+    _require_valid_constitution("research gex-templates")
+
     import pandas as pd
 
     from prop_alpha.discovery.hypothesis import HypothesisLedger

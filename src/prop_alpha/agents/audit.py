@@ -2,6 +2,15 @@
 date, experiment ID, hypothesis, dataset, config, result, decision, and
 reasons — append-only, so a decision is never silently revised (spec §76).
 Mirrors the Hypothesis Ledger pattern from Phase 7's discovery engine.
+
+Hardening pass (Step 17, "audit everything"/experiment provenance):
+`constitution_id`/`constitution_version`/`constitution_hash`/`git_commit`
+were added so every audit entry is traceable back to exactly which
+Research Constitution and code revision it was decided under — not just
+which dataset/config. They default to `""` so existing call sites and any
+serialized entries from before this field existed keep working; `cli.py`'s
+one real call site populates them from `governance.constitution.
+get_constitution_status()` and `utils.hashing.git_commit_hash()`.
 """
 from __future__ import annotations
 
@@ -24,6 +33,10 @@ class AuditEntry:
     result_summary: str
     decision: str
     reasons: list[str] = field(default_factory=list)
+    constitution_id: str = ""
+    constitution_version: str = ""
+    constitution_hash: str = ""
+    git_commit: str = ""
 
 
 class AuditTrail:

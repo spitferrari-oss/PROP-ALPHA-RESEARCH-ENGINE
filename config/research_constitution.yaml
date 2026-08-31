@@ -1,0 +1,147 @@
+constitution:
+  id: PARE-RESEARCH-CONSTITUTION
+  version: 1.0.0
+  effective_date: "2026-08-31"
+
+  objective:
+    primary: >-
+      Maximize risk-adjusted, cost-aware Expected Payout under real
+      prop-firm account constraints, not raw backtest return.
+    secondary:
+      - Preserve capital under prop-firm drawdown rules before pursuing
+        the profit target.
+      - Prefer statistically validated, regime-conditional edges over
+        curve-fit point estimates.
+      - Never advance a component's claimed capability beyond what has
+        actually been verified against real infrastructure.
+
+  immutable_principles:
+    - id: NO_FABRICATED_DATA
+      rule: >-
+        No component may present synthetic, mocked, replayed, or
+        estimated data as real market evidence. Every dataset, report,
+        and status output must be labeled with its true source (REAL,
+        REPLAY, SYNTHETIC, MOCK, NOT_CONNECTED).
+      severity: BLOCKING
+      enabled: true
+
+    - id: MISSING_NOT_ZERO
+      rule: >-
+        A metric that is unavailable, stale beyond its configured maximum
+        age, or not yet computed must be represented as null/unavailable,
+        never defaulted to zero or silently interpolated.
+      severity: BLOCKING
+      enabled: true
+
+    - id: NO_ASSUMPTION_PRINCIPLE
+      rule: >-
+        No component may hardcode a directional or causal claim (e.g.
+        "positive GEX is bullish") into feature engineering,
+        classification, or scoring logic. Any such relationship must be
+        tested empirically by the research engine before being relied
+        upon.
+      severity: BLOCKING
+      enabled: true
+
+    - id: UTC_TIMESTAMP_DISCIPLINE
+      rule: >-
+        Every timestamp that participates in synchronization, ordering,
+        or replay logic must be timezone-aware and normalized to UTC as
+        the canonical reference; a naive timestamp is a hard error, never
+        silently assumed.
+      severity: BLOCKING
+      enabled: true
+
+    - id: IMMUTABLE_RAW_DATA
+      rule: >-
+        Once written, a raw data partition or recorded live session is
+        never overwritten in place. A correction is a new, explicitly
+        versioned artifact.
+      severity: BLOCKING
+      enabled: true
+
+    - id: NO_TRADE_IS_DEFAULT
+      rule: >-
+        In the absence of a positive, currently-valid trade eligibility
+        determination, the system's default action is to not trade.
+        Eligibility must be proven affirmatively per decision; it is
+        never assumed.
+      severity: BLOCKING
+      enabled: true
+
+    - id: EXECUTION_DISABLED_UNTIL_APPROVED
+      rule: >-
+        No code path may submit, simulate-as-live, or otherwise route a
+        real order to a broker or prop-firm execution API unless a
+        separate, explicitly human-approved execution-enablement change
+        has been made outside of routine research/backtesting work.
+      severity: BLOCKING
+      enabled: true
+
+    - id: PROVENANCE_REQUIRED
+      rule: >-
+        Every experiment record must capture the Constitution id/version/
+        hash, git commit, dataset hash, and configuration hash it ran
+        under.
+      severity: BLOCKING
+      enabled: true
+
+    - id: STATE_TRANSITIONS_GATED
+      rule: >-
+        An alpha's research_status may only advance through the defined
+        research-state sequence; it may never jump directly from an early
+        state (HYPOTHESIS/BACKTESTED) to a live-eligible state without
+        passing every intermediate statistical/risk gate.
+      severity: BLOCKING
+      enabled: true
+
+    - id: PROVIDER_CLAIMS_MUST_BE_VERIFIED
+      rule: >-
+        A data provider adapter may only report its integration status as
+        verified/live after an explicit, real contract check against that
+        provider succeeds. Absent that check, its status is NOT_VERIFIED,
+        never assumed working.
+      severity: BLOCKING
+      enabled: true
+
+  hard_gates:
+    minimum_trades_for_statistical_significance: 100
+    maximum_probability_of_backtest_overfitting: 0.5
+    minimum_deflated_sharpe_ratio_significance: 0.5
+    maximum_probability_of_prop_breach: 0.20
+    minimum_probability_of_payout: 0.40
+    minimum_walk_forward_positive_fold_fraction: 0.6
+
+  required_metrics:
+    - expected_value_per_day
+    - out_of_sample_expected_value_per_day
+    - probability_of_backtest_overfitting
+    - deflated_sharpe_ratio
+    - probability_of_prop_breach
+    - probability_of_payout
+    - walk_forward_positive_fold_fraction
+    - max_drawdown
+
+  research_states:
+    - HYPOTHESIS
+    - BACKTESTED
+    - OUT_OF_SAMPLE
+    - WALK_FORWARD
+    - ROBUST
+    - PAPER_TRADING_ACCEPTABLE
+    - LIVE_APPROVED
+    - LIVE
+    - RETIRED
+
+  forbidden_actions:
+    - SUBMIT_REAL_ORDER
+    - FABRICATE_MARKET_DATA
+    - SKIP_RESEARCH_STATE_GATE
+    - DEFAULT_MISSING_METRIC_TO_ZERO
+    - SELF_AMEND_CONSTITUTION
+    - CLAIM_UNVERIFIED_PROVIDER_AS_LIVE
+
+  constitution_control:
+    self_amendment_allowed: false
+    human_approval_required_for_changes: true
+    hash_algorithm: SHA256
