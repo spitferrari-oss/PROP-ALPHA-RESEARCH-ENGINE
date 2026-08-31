@@ -38,3 +38,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "unit: fast, fully offline unit test (the default — most tests carry no marker at all, which is equivalent)",
+    "integration: exercises multiple modules together (e.g. tests/test_integration_data_extension.py), still offline",
+    "network: requires real outbound network access to run for real",
+    "provider: exercises a real (not mocked/injected) vendor provider client",
+    "live: connects to a live/streaming data feed or account",
+    "slow: takes noticeably longer than the rest of the suite (e.g. Gaussian Mixture / combinatorial search tests)",
+]

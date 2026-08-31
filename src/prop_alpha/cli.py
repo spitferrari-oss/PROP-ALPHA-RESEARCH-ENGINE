@@ -166,6 +166,109 @@ def _print_constitution_status(status: dict) -> None:
         for error in status["errors"]:
             typer.echo(f"  - {error}")
 
+
+_CORE_DEPENDENCIES = [
+    ("pandas", "PANDAS"), ("numpy", "NUMPY"), ("scipy", "SCIPY"),
+    ("pyarrow", "PYARROW"), ("duckdb", "DUCKDB"), ("yaml", "PYYAML"),
+    ("pydantic", "PYDANTIC"), ("typer", "TYPER"), ("sklearn", "SKLEARN"),
+]
+_OPTIONAL_DEPENDENCIES = [
+    ("databento", "DATABENTO SDK"), ("requests", "REQUESTS / GEXBOT CLIENT"),
+]
+
+
+@system_app.command("doctor")
+def system_doctor() -> None:
+    """Hardening pass (Step 3, Blocker F): environment/dependency
+    diagnostics. Reports Python and every core/optional package's
+    installed state, version, and required/optional classification.
+    Never silently imports an optional package as a side effect of
+    anything else — the only import this command performs on an
+    optional package is this explicit, reported check.
+    """
+    import importlib
+    import sys
+
+    typer.echo("PARE SYSTEM DOCTOR")
+    typer.echo("")
+    typer.echo(f"PYTHON          {sys.version.split()[0]:<14} required=True  (>=3.11)")
+    typer.echo("")
+    typer.echo("PACKAGE INSTALLATION")
+
+    all_required_ok = True
+    for module_name, label in _CORE_DEPENDENCIES:
+        try:
+            mod = importlib.import_module(module_name)
+            version = getattr(mod, "__version__", "unknown")
+            typer.echo(f"{label:<24} INSTALLED       version={version:<14} required=True   optional=False")
+        except ImportError:
+            all_required_ok = False
+            typer.echo(f"{label:<24} MISSING         version={'n/a':<14} required=True   optional=False")
+
+    typer.echo("")
+    for module_name, label in _OPTIONAL_DEPENDENCIES:
+        try:
+            mod = importlib.import_module(module_name)
+            version = getattr(mod, "__version__", "unknown")
+            typer.echo(f"{label:<24} INSTALLED       version={version:<14} required=False  optional=True")
+        except ImportError:
+            typer.echo(f"{label:<24} NOT INSTALLED   version={'n/a':<14} required=False  optional=True")
+
+    typer.echo("")
+    typer.echo(f"OVERALL: {'PASS' if all_required_ok else 'FAIL — missing required package(s)'}")
+    if not all_required_ok:
+        raise typer.Exit(code=1)
+
+
+@system_app.command("test")
+def system_test() -> None:
+    """Hardening pass (Step 47): runs the test suite grouped by marker
+    (UNIT/INTEGRATION/PROVIDER/NETWORK/LIVE) and summarizes PASS/FAIL/
+    SKIP/BLOCKED per group. As of this hardening pass, every test in
+    this repository runs fully offline via dependency-injected fakes and
+    mocks — none carry `network`/`provider`/`live` markers yet, because
+    none of them actually need real credentials to run. That means the
+    NETWORK/PROVIDER/LIVE groups below legitimately report 0 tests, not
+    a fabricated PASS; that is the accurate state of this repository, see
+    reports/hardening_report.md.
+    """
+    import subprocess
+    import sys
+
+    groups = [
+        ("UNIT", "not integration and not network and not provider and not live"),
+        ("INTEGRATION", "integration"),
+        ("PROVIDER", "provider"),
+        ("NETWORK", "network"),
+        ("LIVE", "live"),
+    ]
+
+    typer.echo("PARE SYSTEM TEST")
+    typer.echo("")
+    any_failed = False
+    for label, expr in groups:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-m", expr],
+            capture_output=True, text=True,
+        )
+        stdout_lines = [line for line in result.stdout.splitlines() if line.strip()]
+        summary_line = stdout_lines[-1] if stdout_lines else "(no output)"
+        # pytest exit code 5 == no tests collected for this -m expression (not a failure)
+        if result.returncode == 5 or "0 passed" in summary_line and "failed" not in summary_line:
+            status = "BLOCKED (0 tests collected for this marker)"
+        elif result.returncode == 0:
+            status = "PASS"
+        else:
+            status = "FAIL"
+            any_failed = True
+        typer.echo(f"{label:<12} {status:<40} {summary_line}")
+
+    typer.echo("")
+    typer.echo(f"OVERALL: {'FAIL' if any_failed else 'PASS'}")
+    if any_failed:
+        raise typer.Exit(code=1)
+
+
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
 

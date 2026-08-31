@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pytest
+
 from prop_alpha.data.ingest import ingest_historical
 from prop_alpha.data.lake import DataLakePaths
 from prop_alpha.data.lake_query import query_tier
@@ -38,6 +40,8 @@ from prop_alpha.research_templates.conditions import GEX_CONDITION_LIBRARY
 from prop_alpha.research_templates.discovery import run_gex_futures_discovery
 from prop_alpha.research_templates.gex_market_frame import enrich_synced_frame_with_gex_features
 from prop_alpha.sync.cross_market import synchronize_frame
+
+pytestmark = pytest.mark.integration
 
 
 def _ingest_and_sync(tmp_path, n_snapshots=40, snapshot_interval_seconds=180.0):

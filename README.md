@@ -26,9 +26,16 @@ named throughout the spec remain open — see "What's not built yet" below.
 
 ## Quickstart
 
+This project is primarily used on **Windows** — run
+`.\scripts\bootstrap_dev.ps1` from PowerShell, or see
+`docs/development.md` for the full setup guide (Windows and Linux/macOS,
+optional provider dependencies, environment variables, test markers).
+The manual/Linux equivalent:
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+pae system doctor   # verify every dependency actually imports
 
 # Run the whole pipeline in one command: generates a synthetic demo
 # dataset, validates it, builds features, backtests the baseline
