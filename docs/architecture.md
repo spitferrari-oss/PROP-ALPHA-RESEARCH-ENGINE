@@ -142,6 +142,11 @@ src/prop_alpha/
 ├── replay/                     # Data Feed extension: deterministic historical replay engine (spec §56-58)
 │   ├── reader.py                #   read_jsonl_envelopes (recorded sessions) / dataframe_to_envelopes (ingested bars)
 │   └── engine.py                 #   replay_envelopes: deterministic (timestamp, position) ordered dispatch
+├── live_shadow/                # Data Feed extension: live shadow mode, trade proposals + human feedback (spec §59/§75-80)
+│   ├── proposal.py              #   TradeProposal + make_proposal (never an executed order)
+│   ├── feedback.py               #   apply_feedback: the only PENDING -> APPROVED/REJECTED transition
+│   ├── ledger.py                  #   LiveShadowLedger: append-only JSONL, mirrors HypothesisLedger/AuditTrail
+│   └── engine.py                   #   run_live_shadow_session: market-state stream -> proposal_generator -> ledger
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics

@@ -657,12 +657,60 @@ data, market state, signals, and paper/shadow simulation.
   first-envelope-never-sleeps, negative-gap-clamped), and `ReplayResult`'s
   event count/timestamp bounds for both populated and empty input.
 
+**Phase O — Live Shadow Mode (extension §152 Phase O, §59/§75-80)**
+- `live_shadow/proposal.py`: `TradeProposal` — a logged, human-reviewable
+  record of what the system would propose, never an executed or
+  executable order (extension §132/§162, already the top-level scope
+  statement this whole doc opens with). `make_proposal` is the only
+  constructor; it stamps a deterministic `proposal_id` (`utils.hashing.
+  hash_dict` over the fields that make a proposal unique) and, when given
+  a `market_state.vector.MarketState`, attaches its flattened snapshot
+  (`as_flat_dict()`) for later audit — otherwise an empty dict, never a
+  fabricated one. `proposal_from_record` is the inverse of
+  `dataclasses.asdict`, reconstructing a real `TradeProposal` from a
+  ledger row (needed anywhere a caller reads proposals back out to act on
+  them, e.g. the CLI review command below).
+- `live_shadow/feedback.py`: `apply_feedback` is the single place a
+  proposal moves out of `PENDING` — always through an explicit,
+  attributed human decision (`reviewer`, optional `rationale`). It
+  refuses to move a proposal that's already been decided (extension §76:
+  a recorded decision is never silently revised); a reviewer who wants to
+  change their mind reviews a new proposal instead.
+- `live_shadow/ledger.py`: `LiveShadowLedger`, an append-only JSONL store
+  mirroring `discovery.hypothesis.HypothesisLedger`/`agents.audit.
+  AuditTrail`'s exact pattern (extension §76-80: never rewrites or
+  deletes a prior entry). Both proposals and feedback share one file,
+  tagged by a `"kind"` field, so the ledger reads back as a single
+  chronological log of everything that happened to a proposal.
+- `live_shadow/engine.py`: `run_live_shadow_session` ties a market-state
+  stream — fed by a live subscription (Phase C) or Phase N's
+  deterministic replay, via `market_state.vector.build_market_state` — to
+  a caller-supplied `proposal_generator` and the ledger. It owns none of
+  the trading logic itself (no strategy is wired in here, and none is
+  claimed to be); it only guarantees every non-`None` proposal a
+  generator returns gets logged before the session moves on, so nothing
+  proposed goes unrecorded.
+- `pae live-shadow list [--status ...]` / `pae live-shadow decide
+  --proposal-id ... --decision APPROVED|REJECTED --reviewer ...`: the
+  human review loop over the ledger. `decide` re-checks the ledger's own
+  feedback records (not just the in-memory proposal) before applying a
+  decision, since a `PROPOSAL` row is never rewritten in place — the
+  ledger's feedback history is the actual source of truth for whether a
+  proposal has already been decided.
+- 33 new tests (`tests/test_live_shadow_{proposal,feedback,ledger,
+  engine}.py`): deterministic/differentiated proposal IDs, naive-timestamp
+  and invalid-direction rejection, market-state snapshot attachment
+  (present and absent), the full ledger round-trip (`asdict`/`json.dumps`/
+  `json.loads`/`proposal_from_record`), feedback's already-decided guard
+  and non-mutation of the original proposal, append-only behavior across
+  separate `LiveShadowLedger` instances pointed at the same file, and the
+  session engine's counting/logging/empty-stream behavior.
+
 ## What's not built yet
 
-Everything from Phase O onward. Concretely, per the extension's own §152
-order: data-extension live shadow mode with trade proposals and human
-feedback capture (Phase O, §59/§75-80), auto-generated
-GEX/futures research experiment templates (Phase P, §111-114), and the
+Everything from Phase P onward. Concretely, per the extension's own §152
+order: auto-generated GEX/futures research experiment templates (Phase P,
+§111-114), and the
 mock-provider/CI integration-test suite required to run all of the above
 without real API keys or network access (§134-140). Also within Phase B's
 own remit but not yet built: a real exchange holiday calendar for

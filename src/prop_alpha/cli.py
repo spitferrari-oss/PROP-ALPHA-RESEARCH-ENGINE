@@ -65,12 +65,14 @@ research_app = typer.Typer(help="End-to-end research commands")
 options_app = typer.Typer(help="Options intelligence commands (Data Feed extension)")
 data_center_app = typer.Typer(help="Data Center dashboard commands (Data Feed extension)")
 replay_app = typer.Typer(help="Historical replay commands (Data Feed extension)")
+live_shadow_app = typer.Typer(help="Live shadow mode trade proposal commands (Data Feed extension)")
 app.add_typer(data_app, name="data")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(research_app, name="research")
 app.add_typer(options_app, name="options")
 app.add_typer(data_center_app, name="data-center")
 app.add_typer(replay_app, name="replay")
+app.add_typer(live_shadow_app, name="live-shadow")
 
 DEMO_RAW_PATH = "data/raw/nq_15m_synthetic.parquet"
 DEMO_FEATURES_PATH = "data/features/nq_15m_features.parquet"
@@ -335,6 +337,67 @@ def replay_run(
         f"{result.start_timestamp} -> {result.end_timestamp}, "
         f"{result.wall_clock_seconds:.3f}s wall-clock."
     )
+
+
+@live_shadow_app.command("list")
+def live_shadow_list(
+    ledger_path: str = typer.Option("research_memory/live_shadow/proposals.jsonl", help="Live shadow ledger path"),
+    status: str = typer.Option(None, help="Filter to one status: PENDING, APPROVED, or REJECTED"),
+) -> None:
+    """Data Feed extension (§76-80, Phase O): list logged trade proposals
+    — never executed orders, purely a review queue. `status` narrows to
+    one `ProposalStatus`; omit it to see everything logged so far.
+    """
+    from prop_alpha.live_shadow.ledger import LiveShadowLedger
+
+    ledger = LiveShadowLedger(path=ledger_path)
+    records = ledger.read_proposals()
+    if status:
+        records = [r for r in records if r["status"] == status]
+
+    if not records:
+        typer.echo("No proposals found.")
+        return
+    for r in records:
+        typer.echo(
+            f"{r['proposal_id']}  {r['timestamp']}  {r['instrument']} {r['direction']}  "
+            f"entry={r['entry_price']}  [{r['status']}]  {r['rationale']}"
+        )
+
+
+@live_shadow_app.command("decide")
+def live_shadow_decide(
+    proposal_id: str = typer.Option(..., help="Proposal ID to decide on (from `pae live-shadow list`)"),
+    decision: str = typer.Option(..., help="APPROVED or REJECTED"),
+    reviewer: str = typer.Option(..., help="Name/identifier of the human reviewer"),
+    rationale: str = typer.Option(None, help="Optional free-text rationale for the decision"),
+    ledger_path: str = typer.Option("research_memory/live_shadow/proposals.jsonl", help="Live shadow ledger path"),
+) -> None:
+    """Data Feed extension (§78-80, Phase O): record a human reviewer's
+    APPROVED/REJECTED decision on a logged trade proposal. This only ever
+    updates the ledger's record of what was decided — extension §132/§162
+    mean this never sends, simulates as filled, or otherwise activates a
+    real order.
+    """
+    from prop_alpha.live_shadow.feedback import apply_feedback
+    from prop_alpha.live_shadow.ledger import LiveShadowLedger
+    from prop_alpha.live_shadow.proposal import ProposalStatus, proposal_from_record
+
+    ledger = LiveShadowLedger(path=ledger_path)
+    matches = [r for r in ledger.read_proposals() if r["proposal_id"] == proposal_id]
+    if not matches:
+        typer.echo(f"No proposal found with id {proposal_id!r}.", err=True)
+        raise typer.Exit(code=1)
+    if any(f["proposal_id"] == proposal_id for f in ledger.read_feedback()):
+        typer.echo(f"Proposal {proposal_id!r} already has a recorded decision.", err=True)
+        raise typer.Exit(code=1)
+
+    proposal = proposal_from_record(matches[-1])
+    _, feedback = apply_feedback(
+        proposal, ProposalStatus(decision), reviewer=reviewer, rationale=rationale,
+    )
+    ledger.record_feedback(feedback)
+    typer.echo(f"Recorded {decision} for proposal {proposal_id} by {reviewer}.")
 
 
 def _evaluate_strategy(strategy, df_feat, cost_model, config, oos_start_day, run_diagnostics: bool) -> tuple[dict, "pd.Series"]:
