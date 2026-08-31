@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.env
+provider_capability_reports/
 .venv/
 venv/
 *.egg-info/

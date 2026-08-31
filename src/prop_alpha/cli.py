@@ -349,6 +349,73 @@ def options_snapshot(
         typer.echo(f"  {name:<22} {value:>14}   [{status}]")
 
 
+@options_app.command("verify-provider")
+def options_verify_provider(
+    underlying: str = typer.Option("SPX", help="Underlying ticker to check against"),
+    report_dir: str = typer.Option(
+        "provider_capability_reports", help="Directory to save the capability report JSON to",
+    ),
+) -> None:
+    """Hardening pass (Step 22, Blocker G): a real, one-shot GEXBOT
+    contract check — authenticate, make exactly one documented/safe call
+    (`get_gex`), and inspect the actual response structure field by
+    field. Never guesses at an undocumented endpoint and never reports a
+    metric AVAILABLE unless it was actually present in the response.
+    Requires `GEXBOT_API_KEY` and the `requests` package; if either is
+    missing, or the network call fails for any reason, this reports
+    UNAVAILABLE/FAIL honestly rather than a fabricated pass — that is the
+    correct, expected result in this environment (no network access, no
+    GEXBOT account), not a bug.
+    """
+    from prop_alpha.options.gexbot.capability import save_capability_report, verify_provider_contract
+
+    report = verify_provider_contract(underlying=underlying)
+    report_path = save_capability_report(report, out_dir=report_dir)
+
+    typer.echo("GEXBOT PROVIDER VERIFICATION")
+    typer.echo("")
+    typer.echo(f"Authentication: {report.authentication}")
+    for name in ("gex", "dex", "gamma_flip", "vanna", "charm", "vomma", "skew"):
+        label = name.replace("_", " ").title() if name != "gex" and name != "dex" else name.upper()
+        typer.echo(f"{label + ':':<16}{report.metric_availability.get(name, 'NOT_CHECKED')}")
+    typer.echo(f"Orderflow:      {report.orderflow_capability}")
+    typer.echo("")
+    typer.echo(f"Provider status:\n{report.contract_state}")
+    if report.error:
+        typer.echo(f"\nDetail: {report.error}")
+    typer.echo(f"\nCapability report saved to {report_path}")
+
+
+@options_app.command("historical")
+def options_historical(
+    underlying: str = typer.Option(..., help="Underlying ticker"),
+) -> None:
+    """Hardening pass (Step 26): explicit honesty about GEXBOT historical
+    data. GEXBOT's own API has no historical endpoint this repo has ever
+    verified (extension §62's limitation); PARE's own proprietary options
+    history only accumulates once live recording begins (`options.
+    recording`). This command distinguishes PROVIDER_HISTORICAL (never
+    available from GEXBOT here) from PARE_RECORDED_HISTORY (only
+    available once a recorder has actually been run for this underlying)
+    rather than inventing historical GEX data.
+    """
+    typer.echo(f"pae options historical --underlying {underlying}")
+    typer.echo("")
+    typer.echo("PROVIDER_HISTORICAL: NOT_AVAILABLE")
+    typer.echo(
+        "  GEXBOT's API has no historical endpoint this repo has ever verified "
+        "(extension §62). GexbotOptionsProvider.get_historical raises NotImplementedError."
+    )
+    typer.echo("")
+    typer.echo("PARE_RECORDED_HISTORY: NOT_AVAILABLE")
+    typer.echo(
+        "  No options snapshots have been recorded for this underlying via "
+        "options.recording.recorder.OptionsRecorder in this environment. Once a "
+        "recording session has been run and produced stored snapshot partitions, "
+        "this command reports what's actually on disk instead of NOT_AVAILABLE."
+    )
+
+
 @data_center_app.command("status")
 def data_center_status(
     underlying: str = typer.Option(

@@ -1,0 +1,79 @@
+# Options data / feature contract configuration (hardening pass Step
+# 20/32) — separate from config/providers.yaml (connection-level config)
+# and from config/example.yaml's EngineConfig (core strategy config).
+#
+# `metrics` declares which GEXBOT metrics this repo tracks at all and
+# whether each is currently native to a snapshot vs. only derivable
+# downstream. It does NOT claim availability — actual per-metric
+# AVAILABLE/UNAVAILABLE/UNKNOWN status only ever comes from a real
+# `pae options verify-provider` run (src/prop_alpha/options/gexbot/
+# capability.py), never from this file. `features` is the options
+# feature contract Step 32 asks for: every derived options feature this
+# repo computes must declare its source, formula, and — critically —
+# its `missing_data_behavior`, which must always be `null_not_zero`
+# (extension/Constitution MISSING_NOT_ZERO principle) unless a specific,
+# justified exception is documented.
+
+gexbot:
+  metrics:
+    gex:
+      native_to_snapshot: true
+    dex:
+      native_to_snapshot: true
+    gamma_flip:
+      native_to_snapshot: true
+    gamma_levels:
+      native_to_snapshot: true
+      note: >-
+        Reported as major_positive_gamma / major_negative_gamma fields on
+        the snapshot, not a separate "levels" endpoint.
+    vanna:
+      native_to_snapshot: true
+    charm:
+      native_to_snapshot: true
+    vomma:
+      native_to_snapshot: true
+    skew:
+      native_to_snapshot: true
+    orderflow:
+      native_to_snapshot: false
+      note: >-
+        No orderflow parsing exists anywhere in this repo (extension
+        §34). GexbotOptionsProvider.get_orderflow raises
+        NotImplementedError; MockOptionsDataProvider mirrors that
+        honestly rather than fabricating orderflow from GEX snapshot
+        deltas (hardening pass Step 25 — orderflow inference from
+        snapshot deltas is explicitly forbidden).
+
+features:
+  - name: gex_regime
+    source: options.features.classify_gex_regime_series
+    formula: z-score-normalized GEX, thresholded into 5 bands (extension §31)
+    native_or_derived: derived
+    minimum_data_quality: n/a (state label, not a tradeable signal on its own)
+    maximum_data_age_seconds: 60.0
+    missing_data_behavior: null_not_zero  # UNKNOWN regime label, never a fabricated NEUTRAL
+
+  - name: dex_state
+    source: options.features.compute_dex_state
+    formula: magnitude/sign/change/acceleration of raw DEX (extension §32)
+    native_or_derived: derived
+    minimum_data_quality: n/a
+    maximum_data_age_seconds: 60.0
+    missing_data_behavior: null_not_zero
+
+  - name: distance_to_gamma_flip
+    source: options.distance.compute_distance_features
+    formula: (price - gamma_flip) / ATR
+    native_or_derived: derived
+    minimum_data_quality: n/a
+    maximum_data_age_seconds: 60.0
+    missing_data_behavior: null_not_zero  # None when ATR unavailable, never 0
+
+  - name: gex_dynamics
+    source: options.features.compute_gex_dynamics
+    formula: first/second differences of raw GEX (ΔGEX, Δ²GEX)
+    native_or_derived: derived
+    minimum_data_quality: n/a
+    maximum_data_age_seconds: 60.0
+    missing_data_behavior: null_not_zero

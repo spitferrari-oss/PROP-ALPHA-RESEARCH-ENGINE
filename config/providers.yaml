@@ -1,0 +1,19 @@
+# Provider configuration (hardening pass Step 19-20) — kept separate from
+# config/example.yaml's EngineConfig (core strategy/backtest parameters)
+# on purpose: which vendor to talk to and how is an infrastructure
+# decision, not a research parameter. No secrets live in this file —
+# API keys come from environment variables (see .env.example);
+# GEXBOT_API_KEY / DATABENTO_API_KEY.
+
+databento:
+  enabled: false
+  # No base_url here: the databento-python SDK owns its own endpoint
+  # configuration internally; this repo's adapter only ever talks to it
+  # through the SDK client, never raw HTTP.
+
+gexbot:
+  enabled: false
+  base_url: "https://api.gexbot.com"
+  underlyings: ["SPX", "SPY", "QQQ", "NDX"]
+  poll_interval_seconds: 5.0
+  stale_after_seconds: 60.0

@@ -26,6 +26,26 @@ import pandas as pd
 _LEVEL_ORDER = {"L1": 1, "L2": 2, "L3": 3, "L4": 4}
 
 
+class ProviderContractState(str, Enum):
+    """Hardening pass Step 7/19 (Blocker G): what a provider adapter is
+    allowed to claim about itself, vendor-neutral. An adapter's own
+    `contract_state` attribute/property must never report past
+    `CONFIGURED` on its own say-so — only an explicit, real contract
+    check (`options.gexbot.capability.verify_provider_contract` for
+    GEXBOT; an equivalent for Databento would live in
+    `providers.databento`) may report `AUTHENTICATED`/`LIVE_VERIFIED`.
+    This lives here rather than in a specific vendor package because the
+    states themselves are provider-agnostic — any future adapter reuses
+    the same vocabulary instead of inventing its own.
+    """
+    UNVERIFIED = "UNVERIFIED"     # no configuration attempted/known yet
+    CONFIGURED = "CONFIGURED"     # credentials/config present, nothing has been checked against the real API
+    AUTHENTICATED = "AUTHENTICATED"  # a real auth call succeeded
+    LIVE_VERIFIED = "LIVE_VERIFIED"  # a real, safe data call succeeded and its response shape was inspected
+    DEGRADED = "DEGRADED"         # was LIVE_VERIFIED at some point, but recent calls are failing/timing out
+    UNAVAILABLE = "UNAVAILABLE"   # a real check was attempted and failed
+
+
 class DataLevel(str, Enum):
     """Futures market data granularity (extension spec §5). Every alpha
     declares the minimum level it needs (`alpha_requirements.<id>.minimum_data_level`
