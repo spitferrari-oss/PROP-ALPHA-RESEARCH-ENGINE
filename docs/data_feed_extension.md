@@ -706,11 +706,72 @@ data, market state, signals, and paper/shadow simulation.
   separate `LiveShadowLedger` instances pointed at the same file, and the
   session engine's counting/logging/empty-stream behavior.
 
+**Phase P — GEX/Futures Research Experiment Templates (extension §152 Phase P, §111-114)**
+- `research_templates/gex_market_frame.py`: `enrich_synced_frame_with_gex_features`
+  attaches the GEX/DEX state columns the condition library below needs —
+  `options.features.classify_gex_regime_series`/`compute_dex_state`
+  (Phase K) applied to a `sync.cross_market.synchronize_frame` output's
+  `options_gex`/`options_dex` columns. An unsynced bar (already `NaN` in
+  every `options_*` column by `synchronize_frame`'s own contract, Phase J)
+  classifies honestly as GEX regime `UNKNOWN` and `NaN` DEX state — both
+  functions already handle that, so no extra handling is needed here.
+- `research_templates/conditions.py`: `GEX_CONDITION_LIBRARY`, built on
+  the exact same `discovery.conditions.Condition` shape the core
+  Discovery Engine's `CONDITION_LIBRARY` uses (Phase 7). Every condition
+  is a state label only, never a directional claim (extension §37's
+  No-Assumption Principle, still binding: "GEX regime is currently
+  POSITIVE_GAMMA" is not "price will therefore move up"). DEX conditions
+  use sign only (`dex_sign_positive`/`_negative`), not a raw magnitude
+  threshold — DEX has no established normalization the way GEX does
+  (`options.features.normalize_gex_series`), and an arbitrary magnitude
+  cutoff would be exactly the scale-dependent absolute threshold
+  extension §67 warns against.
+- `research_templates/templates.py`: `generate_gex_futures_templates`
+  reuses `discovery.setup_generator.GeneratedStrategy` unmodified — it
+  only needs a `list[Condition]` and a direction, and has no idea one of
+  its two conditions reads options-derived columns. Deliberately a cross
+  product (every futures condition paired with every GEX/DEX condition,
+  both directions), not the core engine's flat combinatorial pool
+  (`generate_candidate_setups`, which would also produce futures-only or
+  GEX-only pairs from a merged library) — Phase P's whole point is a
+  futures setup explicitly conditioned on GEX/DEX state.
+- `research_templates/discovery.py`: `hypothesis_from_gex_template` +
+  `run_gex_futures_discovery` mirror `discovery.pipeline._hypothesis_from_
+  candidate`/`run_discovery`'s exact shape (extension §20's "no backtest
+  without a logged hypothesis" applies here too) but narrower —
+  no symbolic-regression scan, since that stays the core Discovery
+  Engine's own concern over the futures feature set, not duplicated here.
+  Every candidate is logged to the same `discovery.hypothesis.
+  HypothesisLedger` used by the core engine, survivor or not.
+- `pae research gex-templates --enriched-frame-path ... --oos-start-day
+  ...`: generates, screens, and logs cross-market templates from an
+  already-prepared enriched frame. Honestly scoped to what this repo
+  currently has: there is no built pipeline that produces a synced,
+  enriched futures+options frame end-to-end on its own yet — GEXBOT has
+  no historical endpoint (extension §62's limitation, Phase H) and no
+  options-side recorder exists (Phase F's own noted gap below), so
+  building that frame today means combining `pae data ingest`'s output
+  with independently-accumulated options snapshot history via
+  `sync.cross_market.synchronize_frame` + `enrich_synced_frame_with_gex_
+  features` yourself. Not exercised by the test suite for that reason;
+  the condition library, template generator, and discovery orchestration
+  it calls into are.
+- 29 new tests (`tests/test_research_templates_{gex_market_frame,
+  conditions,templates,discovery}.py`): enrichment's required-column
+  errors and column preservation/non-mutation, every GEX/DEX condition's
+  firing behavior against a hand-built frame, cross-product coverage
+  (every candidate has exactly one futures + one GEX condition, both
+  directions, deterministic per seed, `max_candidates` cap respected),
+  and the discovery orchestration's hypothesis auto-fill (including the
+  zero-trade/RETIRED case) plus its full pipeline over a synthetic-OHLCV-
+  derived feature frame with seeded synthetic options columns standing in
+  for real synced data (never presented as real market evidence, same
+  discipline `paper.shadow`'s docstring already commits to for the core
+  engine's own shadow mode).
+
 ## What's not built yet
 
-Everything from Phase P onward. Concretely, per the extension's own §152
-order: auto-generated GEX/futures research experiment templates (Phase P,
-§111-114), and the
+Everything past the extension's own numbered phases. Concretely: the
 mock-provider/CI integration-test suite required to run all of the above
 without real API keys or network access (§134-140). Also within Phase B's
 own remit but not yet built: a real exchange holiday calendar for

@@ -784,5 +784,63 @@ def research_discover(
     typer.echo(f"Discovery report written to {report_path}")
 
 
+@research_app.command("gex-templates")
+def research_gex_templates(
+    enriched_frame_path: str = typer.Option(
+        ..., help="Parquet file: sync.cross_market.synchronize_frame output already run through "
+                   "research_templates.gex_market_frame.enrich_synced_frame_with_gex_features",
+    ),
+    oos_start_day: str = typer.Option(..., help="OOS split date, YYYY-MM-DD"),
+    config: str = typer.Option(None, help="Path to a YAML EngineConfig; defaults built in if omitted"),
+    max_candidates: int = typer.Option(150, help="Max cross-market candidates to generate (extension §111-114)"),
+    ledger_path: str = typer.Option(
+        "research_memory/hypotheses/ledger.jsonl",
+        help="Hypothesis Ledger file (spec §20) — every candidate, survivor or not, is appended here.",
+    ),
+) -> None:
+    """Data Feed extension (§111-114, Phase P): auto-generate GEX/futures
+    cross-market templates, quick-screen each, log every one to the
+    Hypothesis Ledger, and report the survivors.
+
+    Requires an already-synced, already-enriched futures+options frame as
+    input — there is currently no built pipeline in this repo that
+    produces one end-to-end on its own: GEXBOT has no historical endpoint
+    (extension §62's limitation, Phase H) and no options-side recorder
+    exists yet (Phase F's own noted gap), so today that frame has to come
+    from combining `pae data ingest` output with your own accumulated
+    options snapshot history via `sync.cross_market.synchronize_frame` +
+    `research_templates.gex_market_frame.enrich_synced_frame_with_gex_features`.
+    Not exercised by the test suite for that reason; the condition
+    library, template generator, and discovery orchestration it calls
+    into are (`tests/test_research_templates_*.py`).
+    """
+    import pandas as pd
+
+    from prop_alpha.discovery.hypothesis import HypothesisLedger
+    from prop_alpha.research_templates.discovery import run_gex_futures_discovery
+
+    cfg = EngineConfig.from_yaml(config) if config else EngineConfig()
+    cfg.discovery.max_candidates = max_candidates
+    df_enriched = pd.read_parquet(enriched_frame_path)
+    cost_model = CostModel(
+        tick_size=cfg.market.tick_size, tick_value=cfg.market.tick_value,
+        commission_per_round_turn=cfg.cost.commission_per_round_turn,
+        slippage_ticks=cfg.cost.slippage_ticks, spread_ticks=cfg.cost.spread_ticks,
+    )
+    ledger = HypothesisLedger(ledger_path)
+
+    result = run_gex_futures_discovery(
+        df_enriched, cost_model, cfg, dt.date.fromisoformat(oos_start_day), ledger=ledger,
+        dataset_note=f"enriched frame at {enriched_frame_path}",
+    )
+
+    typer.echo(
+        f"GEX/futures templates: {result['n_candidates']} candidates, "
+        f"{result['n_passed_screen']} passed screen."
+    )
+    for r in result["survivors"][:10]:
+        typer.echo(f"  {r['alpha_id']}  {r['alpha_name']}  OOS EV/day={r['oos_ev_per_day']:.2f}  n_trades={r['n_trades']}")
+
+
 if __name__ == "__main__":
     app()

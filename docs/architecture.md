@@ -147,6 +147,11 @@ src/prop_alpha/
 │   ├── feedback.py               #   apply_feedback: the only PENDING -> APPROVED/REJECTED transition
 │   ├── ledger.py                  #   LiveShadowLedger: append-only JSONL, mirrors HypothesisLedger/AuditTrail
 │   └── engine.py                   #   run_live_shadow_session: market-state stream -> proposal_generator -> ledger
+├── research_templates/          # Data Feed extension: GEX/futures research experiment templates (spec §111-114)
+│   ├── gex_market_frame.py       #   enrich_synced_frame_with_gex_features: attaches gex_regime/dex_state columns
+│   ├── conditions.py              #   GEX_CONDITION_LIBRARY: GEX/DEX-aware Condition objects
+│   ├── templates.py                #   generate_gex_futures_templates: futures x GEX cross-product candidates
+│   └── discovery.py                 #   hypothesis_from_gex_template + run_gex_futures_discovery
 ├── agents/                   # Statistician/Risk/Critic/Supervisor + Audit Trail (deterministic, no LLM calls)
 ├── strategies/             # Alpha object (base.py) + 12 baseline strategies (spec §89) + 6 no-edge comparators (baselines.py, spec §90)
 ├── backtest/            # event-driven engine, cost model, trade/day metrics
