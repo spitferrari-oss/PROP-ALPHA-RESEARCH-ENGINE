@@ -334,12 +334,69 @@ data, market state, signals, and paper/shadow simulation.
   for tiers nothing writes to would be exactly the "codice inutile" §3
   warns against elsewhere in this spec).
 
+**Phase H — GEXBOT Adapter (extension §152 Phase H, §23-27)**
+- The extension names two different directories for GEXBOT (§3's
+  `providers/gexbot/` and §24's `options/gexbot/`, with overlapping file
+  names) — resolved the same way earlier phase-boundary overlaps were
+  (Phase C/F, D/G): `options/gexbot/` holds the actual GEXBOT-specific
+  client/auth/parsing/model/health layer (§24's file list), and
+  `providers/gexbot/` holds `GexbotOptionsProvider`, the thin
+  `OptionsDataProvider` implementation (extension §2) that composes it —
+  the only thing the rest of PARE should ever import from this adapter.
+- `options/gexbot/auth.py`: `resolve_api_key` — `GEXBOT_API_KEY` env var
+  or an explicit override, never hardcoded (§25), mirroring
+  `providers.databento.historical`'s `DATABENTO_API_KEY` pattern exactly.
+- `options/gexbot/models.py`: `GexSnapshot` pairs every extension §26
+  metric (GEX, DEX, gamma flip, major positive/negative gamma, Vanna,
+  Charm, Vomma, skew, options volume, open interest) with its own
+  `MetricAvailability` (`AVAILABLE`/`UNAVAILABLE`/`STALE`/`PARTIAL`,
+  §26) carrying timestamp/source/freshness — per §27, tracked per metric,
+  not once for the whole snapshot.
+- `options/gexbot/parser.py`: `parse_snapshot` looks up each metric under
+  several plausible field-name aliases (GEXBOT's exact schema isn't
+  independently verified in this environment — see `client.py`'s
+  docstring) and marks a metric `UNAVAILABLE` (`value=None`) rather than
+  guessing when nothing matches — never conflating a genuinely-reported
+  `0` with a missing metric (§51-52). A metric older than
+  `stale_after_seconds` is `STALE`, not silently treated as live (§27:
+  "Non utilizzare dati options vecchi come se fossero real-time").
+- `options/gexbot/client.py`: `GexbotClient` wraps GEXBOT's (best-effort,
+  unverified) REST API — `session` is dependency-injected exactly like
+  Databento's historical/live clients, so every test runs without network
+  access (§134/§136); the real `requests` session is imported lazily.
+  `start_polling` runs a background daemon thread calling back on an
+  interval — GEXBOT's plan/API tier this targets is REST/polling rather
+  than websocket push, per this module's own documented best guess; a
+  single failed poll doesn't kill the loop.
+- `options/gexbot/health.py`: `compute_health` mirrors
+  `data.live.health.FeedHealth`'s role for the options side —
+  connected/authenticated/last_update/latency/error_rate/data_age/
+  available_metrics (extension §90).
+- `providers/gexbot/GexbotOptionsProvider`: implements `get_snapshot`
+  (parse + return as `dict`, matching Phase A's interface contract),
+  `subscribe_live` (delegates straight to `client.start_polling`), and
+  `get_instrument_state` (which metrics are currently available). Scope
+  discipline (§3's "don't write code nobody can use yet"):
+  `get_historical` raises `NotImplementedError` citing §62's own
+  acknowledgment that GEXBOT's historical retention is provider-limited;
+  `get_levels`/`get_orderflow` raise `NotImplementedError` since parsing
+  them into real objects is explicitly Phase K's job (§29-34) — the raw
+  client methods exist (`client.get_levels`/`get_orderflow`), only the
+  parsing layer is deferred.
+- New optional dependency group `gexbot` in `pyproject.toml`
+  (`pip install 'prop-alpha-engine[gexbot]'`) — base install stays
+  vendor-free, matching Databento's `[databento]` extra.
+- 27 new tests (`tests/test_gexbot_{auth,parser,client,health,provider}.py`):
+  auth resolution, every metric alias/missing/stale/zero-value case,
+  client URL/header construction and error handling, the real (short,
+  network-free) polling-thread smoke test, health computation, and the
+  provider's ABC conformance plus its three deliberate
+  `NotImplementedError`s.
+
 ## What's not built yet
 
-Everything from Phase H onward. Concretely, per the extension's own §152
-order: the
-GEXBOT adapter (Phase H, §23-27) with `GEXBOT_API_KEY` via environment
-variable only, options normalization and the options snapshot/level models
+Everything from Phase I onward. Concretely, per the extension's own §152
+order: options normalization and the options snapshot/level models
 (Phase I, §28-29), futures/options timestamp synchronization (Phase J,
 §35-36), the options feature engine including GEX regime classification
 and the explicit No-Assumption Principle (Phase K, §29-34/§37/§67-70), the
@@ -355,7 +412,8 @@ own remit but not yet built: a real exchange holiday calendar for
 integration test behind an opt-in marker (only the dependency-injected
 fake-client tests exist today, per §134/§136's CI requirement). Also
 within Phase F's own remit but not yet built: `pae options record`
-(depends on Phase H's GEXBOT adapter existing first), deriving fixed-
+(Phase H's GEXBOT adapter now exists to build it against, but the CLI
+command itself isn't wired up), deriving fixed-
 frequency `snapshots`-tier bars from raw tick data at
 `RecordingConfig.futures_snapshot_frequency` (the recorder today writes
 every native message as-is, not resampled — a real design decision left

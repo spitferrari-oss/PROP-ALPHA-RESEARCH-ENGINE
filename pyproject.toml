@@ -22,6 +22,9 @@ dev = [
 databento = [
     "databento>=0.30",
 ]
+gexbot = [
+    "requests>=2.31",
+]
 
 [project.scripts]
 pae = "prop_alpha.cli:app"
