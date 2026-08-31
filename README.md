@@ -24,6 +24,33 @@ report — using a clearly-labeled **synthetic** dataset. "All 10 phases" is
 about breadth of the pipeline, not depth within each: many individual gaps
 named throughout the spec remain open — see "What's not built yet" below.
 
+## Capability status (hardening pass, see `reports/hardening_report.md`)
+
+Precise, not optimistic. A component below is exactly one of:
+**IMPLEMENTED** (real, tested, no caveat), **PARTIALLY IMPLEMENTED**,
+**MOCKED** (a deterministic in-memory stand-in, never real data),
+**REPLAY ONLY** (drives real logic off recorded/synthetic data, not a
+live feed), **NOT VERIFIED** (code exists but has never run against the
+real external system), or **NOT IMPLEMENTED**.
+
+| Component | Status |
+|---|---|
+| Core research pipeline (backtest, OOS, bootstrap/Monte Carlo, PBO/DSR, walk-forward, prop simulation, ML meta-alpha, agents) | **IMPLEMENTED** — offline, deterministic, on synthetic data |
+| Research Constitution governance (`pae constitution ...`) | **IMPLEMENTED** |
+| No-trade gate / daily state machine | **IMPLEMENTED** |
+| Parameter sensitivity / data leakage engines | **IMPLEMENTED** |
+| Databento historical/live adapters | **NOT VERIFIED** — real adapter code, dependency-injected tests only, never run against a real account (no network access, no `databento` package installed here) |
+| GEXBOT adapter (snapshot/levels) | **NOT VERIFIED** — same reason; `pae options verify-provider` reports this honestly rather than assuming success |
+| GEXBOT historical / order flow | **NOT IMPLEMENTED** — GEXBOT has no historical endpoint (extension §62); order-flow parsing was never built |
+| Mock futures/options providers | **MOCKED** — deterministic, seeded, used by every offline test |
+| Data Feed extension (sync, market state, options features, discovery templates) | **IMPLEMENTED** — offline, using mock/synthetic data in tests |
+| Historical replay engine (`pae replay run`) | **IMPLEMENTED** as a mechanism; **REPLAY ONLY** by nature — it drives real pipeline logic off already-recorded data, it does not connect to anything live |
+| OOS-holdout shadow mode (`paper.shadow`, core spec §132) | **REPLAY ONLY** — replays an already-computed backtest holdout, by design (spec §123 forbids presenting this as live) |
+| Live shadow architecture (`pae live-shadow start/status/stop`) | **PARTIALLY IMPLEMENTED** — the pipeline wiring (provider → market state → no-trade → alpha → ledger) is real and tested; no real alpha is wired into the default CLI path, and it has only been run against the mock provider, never a real sustained live connection |
+| Options live recorder | **IMPLEMENTED**, **NOT VERIFIED against a real feed** — tested against synthetic snapshots only |
+| Execution gateway | **NOT IMPLEMENTED** (by design) — `paper.py` is a simulated adapter only; **live execution is disabled** and there is no code path in this repository that can send a real order |
+| Prop-firm order routing | **NOT IMPLEMENTED** — explicitly out of scope; see `docs/roadmap_live.md` |
+
 ## Quickstart
 
 This project is primarily used on **Windows** — run
